@@ -1,0 +1,63 @@
+includes:
+    - phar://phpstan.phar/conf/bleedingEdge.neon
+    - vendor/larastan/larastan/extension.neon
+    - vendor/spaze/phpstan-disallowed-calls/disallowed-dangerous-calls.neon
+    - vendor/spaze/phpstan-disallowed-calls/disallowed-execution-calls.neon
+    - vendor/spaze/phpstan-disallowed-calls/disallowed-insecure-calls.neon
+
+parameters:
+    tmpDir: .cache/phpstan
+
+    paths:
+        - src
+        - tests
+
+    level: max
+
+    type_coverage:
+        return: 100
+        param: 100
+        property: 100
+        constant: 0
+        declare: 100
+
+    type_perfect:
+        null_over_false: true
+        no_mixed: false
+        narrow_param: false
+        narrow_return: true
+
+    cognitive_complexity:
+        class: 80
+        function: 20
+
+    strictRules:
+        allRules: true
+
+    treatPhpDocTypesAsCertain: false
+
+    ignoreErrors:
+        -
+            identifier: trait.unused
+            reportUnmatched: false
+
+        -
+            identifier: method.notFound
+            path: tests/
+            reportUnmatched: false
+        -
+            identifier: method.internalClass
+            path: tests/
+            reportUnmatched: false
+        -
+            identifier: method.nonObject
+            path: tests/
+            reportUnmatched: false
+        -
+            identifier: staticMethod.dynamicCall
+            path: tests/
+            reportUnmatched: false
+        -
+            identifier: classConstant.internalClass
+            path: tests/
+            reportUnmatched: false

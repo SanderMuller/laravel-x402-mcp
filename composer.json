@@ -1,0 +1,105 @@
+{
+    "name": "sandermuller/laravel-x402-mcp",
+    "description": "Bridge between laravel/mcp and laravel-x402 — gate MCP tools behind x402 stablecoin payments.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "laravel",
+        "mcp",
+        "model-context-protocol",
+        "x402",
+        "ai-agents",
+        "paid-tools"
+    ],
+    "homepage": "https://github.com/sandermuller/laravel-x402-mcp",
+    "authors": [
+        {
+            "name": "Sander Muller",
+            "email": "sander@hihaho.com"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "sandermuller/laravel-x402": "^0.1@dev",
+        "laravel/mcp": "^0.6 || ^0.7",
+        "illuminate/support": "^11.0|^12.0"
+    },
+    "require-dev": {
+        "driftingly/rector-laravel": "^2.3",
+        "larastan/larastan": "^3.0",
+        "laravel/pint": "^1.29",
+        "mrpunyapal/rector-pest": "^0.2",
+        "orchestra/testbench": "^9.0|^10.0",
+        "pestphp/pest": "^3.0",
+        "pestphp/pest-plugin-laravel": "^3.0",
+        "phpstan/extension-installer": "^1.4",
+        "phpstan/phpstan": "^2.0",
+        "phpstan/phpstan-deprecation-rules": "^2.0",
+        "phpstan/phpstan-strict-rules": "^2.0",
+        "rector/rector": "^2.0",
+        "rector/type-perfect": "^2.1",
+        "sandermuller/package-boost": "^0.10",
+        "spaze/phpstan-disallowed-calls": "^4.10",
+        "symplify/phpstan-extensions": "^12.0",
+        "tomasvotruba/cognitive-complexity": "^1.1",
+        "tomasvotruba/type-coverage": "^2.1"
+    },
+    "autoload": {
+        "psr-4": {
+            "X402\\Laravel\\Mcp\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "X402\\Laravel\\Mcp\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "branch-alias": {
+            "dev-main": "0.1.x-dev"
+        },
+        "laravel": {
+            "providers": [
+                "X402\\Laravel\\Mcp\\X402McpServiceProvider"
+            ]
+        }
+    },
+    "scripts": {
+        "test": "vendor/bin/pest",
+        "phpstan": "vendor/bin/phpstan analyse --memory-limit=2G",
+        "phpstan-simplified": "vendor/bin/phpstan analyse --memory-limit=2G --error-format symplify",
+        "phpstan-clear-cache": "vendor/bin/phpstan clear-result-cache",
+        "format": "vendor/bin/pint",
+        "rector": "vendor/bin/rector process",
+        "qa": [
+            "@rector",
+            "@format",
+            "@phpstan-simplified"
+        ]
+    },
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true,
+            "phpstan/extension-installer": true
+        },
+        "sort-packages": true
+    },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../php-x402",
+            "options": {
+                "symlink": true
+            }
+        },
+        {
+            "type": "path",
+            "url": "../laravel-x402",
+            "options": {
+                "symlink": true
+            }
+        }
+    ],
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
