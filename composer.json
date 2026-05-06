@@ -25,20 +25,26 @@
         "illuminate/support": "^11.0|^12.0"
     },
     "require-dev": {
+        "dg/bypass-finals": "^1.9",
         "driftingly/rector-laravel": "^2.3",
         "larastan/larastan": "^3.0",
         "laravel/pint": "^1.29",
+        "mockery/mockery": "^1.6",
         "mrpunyapal/rector-pest": "^0.2",
+        "nunomaduro/collision": "^8.0",
         "orchestra/testbench": "^9.0|^10.0",
         "pestphp/pest": "^3.0",
+        "pestphp/pest-plugin-arch": "^3.0",
         "pestphp/pest-plugin-laravel": "^3.0",
         "phpstan/extension-installer": "^1.4",
         "phpstan/phpstan": "^2.0",
         "phpstan/phpstan-deprecation-rules": "^2.0",
+        "phpstan/phpstan-phpunit": "^2.0",
         "phpstan/phpstan-strict-rules": "^2.0",
         "rector/rector": "^2.0",
         "rector/type-perfect": "^2.1",
         "sandermuller/package-boost": "^0.10",
+        "spatie/ray": "^1.48",
         "spaze/phpstan-disallowed-calls": "^4.10",
         "symplify/phpstan-extensions": "^12.0",
         "tomasvotruba/cognitive-complexity": "^1.1",
@@ -51,7 +57,8 @@
     },
     "autoload-dev": {
         "psr-4": {
-            "X402\\Laravel\\Mcp\\Tests\\": "tests/"
+            "X402\\Laravel\\Mcp\\Tests\\": "tests/",
+            "Workbench\\App\\": "workbench/app/"
         }
     },
     "extra": {
@@ -65,12 +72,17 @@
         }
     },
     "scripts": {
-        "test": "vendor/bin/pest",
+        "post-install-cmd": [
+            "if [ $COMPOSER_DEV_MODE -eq 1 ]; then vendor/bin/testbench package-boost:sync; fi"
+        ],
         "phpstan": "vendor/bin/phpstan analyse --memory-limit=2G",
         "phpstan-simplified": "vendor/bin/phpstan analyse --memory-limit=2G --error-format symplify",
         "phpstan-clear-cache": "vendor/bin/phpstan clear-result-cache",
         "format": "vendor/bin/pint",
         "rector": "vendor/bin/rector process",
+        "test": "vendor/bin/pest",
+        "test-coverage": "vendor/bin/pest --coverage",
+        "sync-ai": "vendor/bin/testbench package-boost:sync",
         "qa": [
             "@rector",
             "@format",

@@ -1,6 +1,7 @@
 <?php declare(strict_types=1);
 
 use Rector\Caching\ValueObject\Storage\FileCacheStorage;
+use Rector\Carbon\Rector\FuncCall\DateFuncCallToCarbonRector;
 use Rector\CodeQuality\Rector\ClassMethod\InlineArrayReturnAssignRector;
 use Rector\CodeQuality\Rector\If_\ExplicitBoolCompareRector;
 use Rector\CodingStyle\Rector\Encapsed\EncapsedStringsToSprintfRector;
@@ -32,7 +33,9 @@ return RectorConfig::configure()
         privatization: true,
         instanceOf: true,
         earlyReturn: true,
+        carbon: true,
         rectorPreset: true,
+        phpunitCodeQuality: true,
     )
     ->withAttributesSets()
     ->withImportNames()
@@ -51,6 +54,7 @@ return RectorConfig::configure()
         PestSetList::PEST_LARAVEL,
     ])
     ->withSkip([
+        DateFuncCallToCarbonRector::class,
         NullToStrictStringFuncCallArgRector::class,
         AddArrowFunctionReturnTypeRector::class,
         EncapsedStringsToSprintfRector::class,

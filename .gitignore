@@ -1,8 +1,40 @@
-/vendor/
-/.phpunit.cache/
-/.phpunit.result.cache
-/composer.lock
-/.idea/
-/.vscode/
-.phpstan-cache/
-.DS_Store
+# Dependencies
+composer.lock
+/vendor
+/node_modules
+auth.json
+
+# Logs
+npm-debug.log
+yarn-error.log
+
+# Caches
+.cache
+/build
+
+# IDE Helper
+_ide_helper.php
+_ide_helper_models.php
+.phpstorm.meta.php
+
+# Editors
+/.idea
+/.fleet
+/.vscode
+
+# AI
+/.cursor
+/.claude
+/.agents
+/.github/skills
+AGENTS.md
+CLAUDE.md
+
+# Misc
+phpunit.xml
+phpstan.neon
+/docs
+/coverage
+
+# Pre-release drafts
+/internal

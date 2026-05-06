@@ -22,12 +22,11 @@ it('defaults asset to USDC and network to base', function (): void {
 });
 
 it('is reflectable as a class attribute', function (): void {
-    $reflection = new ReflectionClass(new #[X402Price(amount: '0.05')] class
-    {
-    });
+    $reflection = new ReflectionClass(new #[X402Price(amount: '0.05')] class {});
 
     $attrs = $reflection->getAttributes(X402Price::class);
 
-    expect($attrs)->toHaveCount(1);
-    expect($attrs[0]->newInstance()->amount)->toBe('0.05');
+    expect($attrs)->toHaveCount(1)
+        ->and($attrs[0]->newInstance()->amount)
+        ->toBe('0.05');
 });
