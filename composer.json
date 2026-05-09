@@ -20,7 +20,7 @@
     ],
     "require": {
         "php": "^8.2",
-        "sandermuller/laravel-x402": "^0.2",
+        "sandermuller/laravel-x402": "^0.3",
         "laravel/mcp": "^0.6 || ^0.7",
         "illuminate/support": "^11.0|^12.0"
     },

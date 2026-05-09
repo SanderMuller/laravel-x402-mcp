@@ -104,9 +104,9 @@ it('serves a 402 challenge over the HTTP transport when no payment is presented'
     $resource = $structured['resource'];
 
     expect($resource['url'] ?? null)->toBe('mcp://tool/roundtrip-paid-tool')
-        ->and($fake->verifyCalls)
+        ->and($fake->verifyCalls())
         ->toBeEmpty()
-        ->and($fake->settleCalls)
+        ->and($fake->settleCalls())
         ->toBeEmpty();
 });
 
