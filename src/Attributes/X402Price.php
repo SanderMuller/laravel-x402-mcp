@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace X402\Laravel\Mcp\Attributes;
 
 use Attribute;
+use Laravel\Mcp\Server\Tool;
+use ReflectionClass;
 
 /**
  * Declare a price for a Laravel MCP tool.
@@ -33,4 +35,20 @@ final readonly class X402Price
         public string $network = 'base',
         public ?string $payTo = null,
     ) {}
+
+    /**
+     * Pull the `#[X402Price]` instance off a Tool, or `null` when the tool
+     * is not gated. Centralizes the reflection dance shared by `X402CallTool`,
+     * `X402ListTools`, and `ListToolsCommand`.
+     */
+    public static function resolveFor(Tool $tool): ?self
+    {
+        $attributes = (new ReflectionClass($tool))->getAttributes(self::class);
+
+        if ($attributes === []) {
+            return null;
+        }
+
+        return $attributes[0]->newInstance();
+    }
 }

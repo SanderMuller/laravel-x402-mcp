@@ -92,3 +92,11 @@ parameters:
             identifier: return.type
             path: src/Server/Methods/X402CallTool.php
             reportUnmatched: false
+        # CursorPaginator's $items param is Collection<int, mixed>; ServerContext::tools()
+        # returns Collection<int, Tool>. PHP generics are invariant — the laravel/mcp
+        # parent ListTools has the same call shape. Same interop-noise exemption as
+        # X402CallTool above.
+        -
+            identifier: argument.type
+            path: src/Server/Methods/X402ListTools.php
+            reportUnmatched: false

@@ -4,63 +4,60 @@ declare(strict_types=1);
 
 namespace X402\Laravel\Mcp\Server\Concerns;
 
-use Laravel\Mcp\Server\Methods\CompletionComplete;
-use Laravel\Mcp\Server\Methods\GetPrompt;
-use Laravel\Mcp\Server\Methods\Initialize;
-use Laravel\Mcp\Server\Methods\ListPrompts;
-use Laravel\Mcp\Server\Methods\ListResources;
-use Laravel\Mcp\Server\Methods\ListResourceTemplates;
-use Laravel\Mcp\Server\Methods\ListTools;
-use Laravel\Mcp\Server\Methods\Ping;
-use Laravel\Mcp\Server\Methods\ReadResource;
 use X402\Laravel\Mcp\Server\Methods\X402CallTool;
+use X402\Laravel\Mcp\Server\Methods\X402ListTools;
 
 /**
- * Drop-in trait for `Laravel\Mcp\Server\Server` subclasses.
+ * Drop-in trait for `Laravel\Mcp\Server\Server` subclasses. Registers two
+ * JSON-RPC method handlers when the host server runs:
  *
- * Replaces the default `tools/call` method handler with `X402CallTool`,
- * which gates any tool annotated with `#[X402Price]` behind an x402
- * payment.
+ *   - `tools/list` → `X402ListTools` — advertises priced tools as
+ *     `_meta["x402/price"]` so agents can discover prices before invoking.
+ *   - `tools/call` → `X402CallTool` — gates any tool annotated with
+ *     `#[X402Price]` behind a verified + settled x402 payment. Tools
+ *     without `#[X402Price]` pass through to the standard `CallTool`.
  *
- * Usage:
+ * **Override-resilient by design.** PHP traits lose to subclass method
+ * declarations, so a single hook point can be silently shadowed by a
+ * downstream override. To keep payment gating from disappearing on a
+ * custom `boot()`, `start()`, or both, the trait registers via two
+ * independent entry points:
  *
- *   final class MyMcpServer extends \Laravel\Mcp\Server\Server
- *   {
- *       use WithX402Payment;
- *   }
+ *   - `start()` — primary hook, runs once per server lifecycle.
+ *   - `handle()` — safety net, runs once per JSON-RPC message. Catches
+ *     subclasses that override `start()`. `addMethod()` is idempotent
+ *     so the per-message cost is two array writes — well below noise.
  *
- * Tools without `#[X402Price]` pass through untouched.
+ * The only configuration that fully escapes the trait is a subclass that
+ * overrides BOTH `start()` and `handle()` without calling `parent::*`.
+ * That is an explicit, deep customization — not something a typical
+ * `boot()` override would touch by accident.
  *
- * **Conflict with custom `$methods` overrides:** PHP property resolution
- * picks the class declaration over a trait declaration. A subclass that
- * already declares `protected array $methods = [...]` will silently
- * override this trait. If you need to mix the two, copy the entries
- * from this trait into your own `$methods` array — PHP has no
- * inheritance merge for class-level array properties.
- *
- * **Upstream drift:** the trait pins the full method map at the
- * laravel/mcp v0.7 baseline because PHP property override is a full
- * replace, not a merge. If laravel/mcp ships a new JSON-RPC method
- * (e.g. `tools/list-changed` notifications), this trait must be
- * resynced to include the new default handler — otherwise users of
- * `WithX402Payment` won't see the new method on their server.
- * Track upstream changes in `vendor/laravel/mcp/src/Server.php`.
+ * Users who *want* to opt out of trait defaults for a specific tool —
+ * for example to register their own `tools/call` handler — should call
+ * `addMethod()` from `boot()`; explicit registrations made there win
+ * over the trait, because trait registration runs *before* `parent::start()`
+ * (and `boot()` runs inside `parent::start()`).
  */
 trait WithX402Payment
 {
-    /**
-     * @var array<string, class-string>
-     */
-    protected array $methods = [
-        'initialize' => Initialize::class,
-        'ping' => Ping::class,
-        'tools/list' => ListTools::class,
-        'tools/call' => X402CallTool::class,
-        'prompts/list' => ListPrompts::class,
-        'prompts/get' => GetPrompt::class,
-        'resources/list' => ListResources::class,
-        'resources/templates/list' => ListResourceTemplates::class,
-        'resources/read' => ReadResource::class,
-        'completion/complete' => CompletionComplete::class,
-    ];
+    public function start(): void
+    {
+        $this->bootX402Payment();
+
+        parent::start();
+    }
+
+    public function handle(string $rawMessage): void
+    {
+        $this->bootX402Payment();
+
+        parent::handle($rawMessage);
+    }
+
+    protected function bootX402Payment(): void
+    {
+        $this->addMethod('tools/list', X402ListTools::class);
+        $this->addMethod('tools/call', X402CallTool::class);
+    }
 }

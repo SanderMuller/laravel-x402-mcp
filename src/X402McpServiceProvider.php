@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace X402\Laravel\Mcp;
 
 use Illuminate\Support\ServiceProvider;
+use X402\Laravel\Mcp\Console\ListToolsCommand;
 
 /**
  * The bridge needs no boot-time wiring of its own — `X402CallTool` is
@@ -21,6 +22,10 @@ final class X402McpServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        // Reserved for future boot logic (e.g. opt-in config publishing).
+        if ($this->app->runningInConsole()) {
+            $this->commands([
+                ListToolsCommand::class,
+            ]);
+        }
     }
 }

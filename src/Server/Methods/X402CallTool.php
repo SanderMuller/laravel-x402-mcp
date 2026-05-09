@@ -19,7 +19,6 @@ use Laravel\Mcp\Server\Tool;
 use Laravel\Mcp\Server\Transport\JsonRpcRequest;
 use Laravel\Mcp\Server\Transport\JsonRpcResponse;
 use Laravel\Mcp\Support\ValidationMessages;
-use ReflectionClass;
 use X402\Errors\ErrorReason;
 use X402\Exceptions\InvalidPaymentException;
 use X402\Facilitator\FacilitatorClient;
@@ -313,13 +312,7 @@ final class X402CallTool extends CallTool
 
     private function priceAttribute(Tool $tool): ?X402Price
     {
-        $attrs = (new ReflectionClass($tool))->getAttributes(X402Price::class);
-
-        if ($attrs === []) {
-            return null;
-        }
-
-        return $attrs[0]->newInstance();
+        return X402Price::resolveFor($tool);
     }
 
     private function buildChallenge(X402Price $price, string $resource): PaymentRequired
