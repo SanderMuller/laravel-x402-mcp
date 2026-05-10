@@ -26,33 +26,6 @@ use X402\Protocol\PaymentSignature;
 use X402\Replay\InMemoryNonceStore;
 use X402\Replay\NonceStoreContract;
 
-#[X402Price(amount: '0.01', asset: 'USDC', network: 'base')]
-final class PaidEchoTool extends Tool
-{
-    public function description(): string
-    {
-        return 'Paid echo tool for tests.';
-    }
-
-    public function handle(Request $request): Response
-    {
-        return Response::json(['echo' => 'paid']);
-    }
-}
-
-final class FreeEchoTool extends Tool
-{
-    public function description(): string
-    {
-        return 'Free echo tool for tests.';
-    }
-
-    public function handle(Request $request): Response
-    {
-        return Response::json(['echo' => 'free']);
-    }
-}
-
 final class FreeUnauthorizedTool extends Tool
 {
     public function description(): string
@@ -156,9 +129,6 @@ final class PaidStreamingThrowsRuntimeTool extends Tool
     }
 }
 
-// `StubFacilitator` lives in `tests/Support/X402TestHelpers.php` so it can be
-// shared with `X402ReadResourceTest` (and future `X402GetPromptTest`).
-
 /**
  * Counts verify + settle invocations so cache-hit tests can assert the
  * facilitator was NOT called on the retry path.
@@ -252,8 +222,6 @@ function makeJsonRpcRequest(string $toolName, array $extraParams = []): JsonRpcR
     );
 }
 
-// `expectedReceipt()` lives in `tests/Support/X402TestHelpers.php`.
-
 /**
  * Narrow a `Generator|JsonRpcResponse` from `X402CallTool::handle` to a
  * frame list. PHPStan can't see through Pest's `expect(...)->toBeInstanceOf(...)`,
@@ -271,8 +239,6 @@ function streamFrames(Generator|JsonRpcResponse $result): array
     /** @var list<JsonRpcResponse> */
     return iterator_to_array($result, preserve_keys: false);
 }
-
-// `buildPaymentMeta()` lives in `tests/Support/X402TestHelpers.php`.
 
 it('returns a tool result with isError + structuredContent when no x402/payment meta is present', function (): void {
     $rpcRequest = makeJsonRpcRequest('paid-echo-tool');
@@ -491,7 +457,7 @@ it('pins the parent CallTool invocation contract for AuthorizationException', fu
     // AuthorizationException catch landed in 0.7. Under prefer-lowest
     // (0.6.x) the parent rethrows; the parity test below still
     // verifies *our* catch shape against that older parent.
-    $filename = (new \ReflectionMethod(CallTool::class, 'handle'))->getFileName();
+    $filename = (new ReflectionMethod(CallTool::class, 'handle'))->getFileName();
     $body = is_string($filename) ? file_get_contents($filename) : false;
     if (! is_string($body) || ! str_contains($body, 'AuthorizationException $authException')) {
         test()->markTestSkipped('parent CallTool::handle predates the AuthorizationException catch (laravel/mcp < 0.7)');

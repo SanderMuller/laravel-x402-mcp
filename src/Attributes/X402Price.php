@@ -27,6 +27,12 @@ use ReflectionClass;
 final readonly class X402Price
 {
     /**
+     * Wire-format `_meta` key for advertised prices on
+     * `tools/list` / `resources/list` / `prompts/list`.
+     */
+    public const META_KEY = 'x402/price';
+
+    /**
      * @param  string  $amount  Decimal in human units, e.g. "0.01" for 1¢ USDC.
      * @param  string  $asset  Symbol for documentation; the actual contract address comes from x402 config.
      * @param  string  $network  Network slug (base, base-sepolia, ethereum, polygon, arbitrum) or raw CAIP-2.
@@ -55,5 +61,28 @@ final readonly class X402Price
         }
 
         return $attributes[0]->newInstance();
+    }
+
+    /**
+     * Wire-format meta block for `_meta["x402/price"]` on
+     * `tools/list` / `resources/list` / `prompts/list`. Omits `payTo`
+     * when it falls back to the default recipient — agents only need
+     * to see the override when one is set.
+     *
+     * @return array{amount: string, asset: string, network: string, payTo?: string}
+     */
+    public function toMetaArray(): array
+    {
+        $meta = [
+            'amount' => $this->amount,
+            'asset' => $this->asset,
+            'network' => $this->network,
+        ];
+
+        if ($this->payTo !== null) {
+            $meta['payTo'] = $this->payTo;
+        }
+
+        return $meta;
     }
 }

@@ -102,11 +102,20 @@ parameters:
             identifier: return.type
             path: src/Server/Methods/X402GetPrompt.php
             reportUnmatched: false
-        # CursorPaginator's $items param is Collection<int, mixed>; ServerContext::tools()
-        # returns Collection<int, Tool>. PHP generics are invariant — the laravel/mcp
-        # parent ListTools has the same call shape. Same interop-noise exemption as
+        # CursorPaginator's $items param is Collection<int, mixed>, the trait's
+        # advertisePrices() takes Collection<int, Primitive>, and each list
+        # handler passes Collection<int, Tool|Resource|Prompt>. PHP generics
+        # are invariant in both directions — the laravel/mcp parent List
+        # handlers have the same call shape. Same interop-noise exemption as
         # X402CallTool above.
         -
             identifier: argument.type
-            path: src/Server/Methods/X402ListTools.php
+            path: src/Server/Concerns/AdvertisesX402Price.php
+            reportUnmatched: false
+        -
+            identifier: argument.type
+            paths:
+                - src/Server/Methods/X402ListTools.php
+                - src/Server/Methods/X402ListResources.php
+                - src/Server/Methods/X402ListPrompts.php
             reportUnmatched: false

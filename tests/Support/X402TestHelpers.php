@@ -2,13 +2,19 @@
 
 declare(strict_types=1);
 
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Date;
+use Laravel\Mcp\Response;
+use Laravel\Mcp\Server\Prompt;
+use Laravel\Mcp\Server\Resource;
+use Laravel\Mcp\Server\Tool;
 use X402\Facilitator\DiscoveryPage;
 use X402\Facilitator\DiscoveryQuery;
 use X402\Facilitator\FacilitatorClient;
 use X402\Facilitator\SettleResult;
 use X402\Facilitator\SupportedKinds;
 use X402\Facilitator\VerifyResult;
+use X402\Laravel\Mcp\Attributes\X402Price;
 use X402\Protocol\PaymentRequired;
 use X402\Protocol\PaymentSignature;
 
@@ -80,6 +86,95 @@ if (! function_exists('buildPaymentMeta')) {
                 ],
             ],
         ];
+    }
+}
+
+if (! class_exists(PaidEchoTool::class, autoload: false)) {
+    // Shared by handler tests + list-handler tests; PHP forbids redeclaring
+    // a class, so any fixture referenced from two test files lives here.
+    #[X402Price(amount: '0.01', asset: 'USDC', network: 'base')]
+    final class PaidEchoTool extends Tool
+    {
+        public function description(): string
+        {
+            return 'Paid echo tool for tests.';
+        }
+
+        public function handle(Request $request): Response
+        {
+            return Response::json(['echo' => 'paid']);
+        }
+    }
+
+    final class FreeEchoTool extends Tool
+    {
+        public function description(): string
+        {
+            return 'Free echo tool for tests.';
+        }
+
+        public function handle(Request $request): Response
+        {
+            return Response::json(['echo' => 'free']);
+        }
+    }
+
+    #[X402Price(amount: '0.01', asset: 'USDC', network: 'base')]
+    final class PaidEchoResource extends Resource
+    {
+        protected string $uri = 'mcp://test/paid-echo';
+
+        public function description(): string
+        {
+            return 'Paid echo resource for tests.';
+        }
+
+        public function handle(): Response
+        {
+            return Response::text('paid resource body');
+        }
+    }
+
+    final class FreeEchoResource extends Resource
+    {
+        protected string $uri = 'mcp://test/free-echo';
+
+        public function description(): string
+        {
+            return 'Free echo resource for tests.';
+        }
+
+        public function handle(): Response
+        {
+            return Response::text('free resource body');
+        }
+    }
+
+    #[X402Price(amount: '0.01', asset: 'USDC', network: 'base')]
+    final class PaidEchoPrompt extends Prompt
+    {
+        public function description(): string
+        {
+            return 'Paid echo prompt for tests.';
+        }
+
+        public function handle(): Response
+        {
+            return Response::text('paid prompt body');
+        }
+    }
+
+    final class FreeEchoPrompt extends Prompt
+    {
+        public function description(): string
+        {
+            return 'Free echo prompt for tests.';
+        }
+
+        public function handle(): Response
+        {
+            return Response::text('free prompt body');
+        }
     }
 }
 

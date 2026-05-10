@@ -1,6 +1,6 @@
 ---
 name: pre-release
-description: "Pre-push / pre-release checklist for laravel-queue-insights. Runs Rector, Pint, Pest, PHPStan, audits README + `.ai/` docs for staleness, then commits + pushes, watches CI for green, and drafts release notes against the verified SHA. Activate before: pushing to remote, tagging a release, writing release notes, or when user mentions: pre-release, pre-push, release checklist, ship, cut release, release notes."
+description: "Pre-push / pre-release checklist. Runs Rector, Pint, Pest, PHPStan, audits README + `.ai/` docs for staleness, then commits + pushes, watches CI for green, and drafts release notes against the verified SHA. Delegates the README audit to the `readme` skill and the release-notes drafting to the `release-notes` skill — this skill owns the gauntlet ordering and SHA-pinning, not the doc content. Activate before: pushing to remote, tagging a release, writing release notes, or when user mentions: pre-release, pre-push, release checklist, ship, cut release, release notes."
 ---
 
 # Pre-Release Checklist
@@ -63,23 +63,13 @@ Must show 0 errors. Fix real issues — do not pad the baseline. See `backend-qu
 
 ### 5. Documentation freshness audit
 
-Release-worthy features change user-visible behavior, so `README.md` and the `.ai/` files we ship to downstream projects (via `package-boost:sync`) can drift silently. Every release must audit both.
-
-**Rule:** add or edit docs only where they reflect a real change. Do not bloat the README or skills. Delete stale content aggressively.
+Release-worthy features change user-visible behavior, so `README.md` and the `.ai/` files we ship to downstream projects (via `package-boost:sync`) can drift silently. Every release must audit both. Add or edit docs only where they reflect a real change — never bloat for the sake of release notes.
 
 #### 5a. README
 
-Scan `README.md` against the commits in this release (`git log <last-tag>..HEAD`). Update the **Features** list and any feature subsections that gained behavior in this release:
+Apply the **`readme` skill's staleness-audit pattern** to `README.md` against the commits in this release. Resolve `<last-tag>` with `gh release list --limit 1 --json tagName -q '.[0].tagName'`, then walk every diff area in `git log <last-tag>..HEAD`: install snippet, version constraints, feature bullets, configuration tables, public-API signatures, and code examples touching behavior altered in this release.
 
-- **Live counts / queue panel** — new metric or grouping change.
-- **Pending & delayed jobs** — inspector behavior, opt-out semantics.
-- **Batches** — chip behavior, modal navigation, retry caveats, opt-out.
-- **Chained jobs** — chip / Chain section behavior, payload-source notes.
-- **Failed jobs / Retry flow** — gate semantics, bulk-retry rules.
-- **Customising row markup** — list of publishable partials.
-- **Public API signatures** on `QueueInsights`, listeners, or `Support/*` classes — if a method gained a parameter, a new public method was added, or behavior changed.
-
-If unsure whether a change warrants a README update: would a user reading the README *after* the release see outdated advice? If yes, update.
+Apply the heuristic from the `readme` skill: would a user reading the README *after* the release see outdated advice? If yes, update. Delete stale content aggressively — bloat compounds release-over-release.
 
 Do NOT edit `CHANGELOG.md` — `.github/workflows/update-changelog.yml` prepends the release body automatically on publish.
 
@@ -160,6 +150,8 @@ On failure:
 
 This is where agents most commonly slip: running the local gauntlet, then jumping straight to `Write internal/release-notes-<version>.md` without committing, pushing, or watching CI. **Do not do that.**
 
+The body of the notes — when to override GitHub's auto-format, structure, version-matrix bumps, ecosystem-dep wording — is owned by the **`release-notes` skill**. This step adds only the pre-release-specific concerns: the version pick, the SHA-pinning preflight, and where the file lives on disk.
+
 #### Choose the version
 
 Latest tag: `gh release list --limit 1 --json tagName -q '.[0].tagName'`. The package follows semver while pre-1.0:
@@ -167,24 +159,6 @@ Latest tag: `gh release list --limit 1 --json tagName -q '.[0].tagName'`. The pa
 - New user-visible feature, additions to public API → minor bump (`0.3.0` → `0.4.0`)
 - Bug fix only / docs / refactor → patch bump (`0.3.0` → `0.3.1`)
 - Breaking change to public API (renamed config key, removed method) → minor bump pre-1.0 (with a clear `BREAKING:` line in the notes)
-
-#### Public-artifact rules
-
-Release notes flow directly to the public GitHub release + `CHANGELOG.md` and are indexed by Packagist. Anything written here is visible to every downstream consumer.
-
-**Do NOT write:**
-- Peer / instance / channel framing: ~~"sourced from peer `e0cp6lq3`"~~, ~~"via claude-peers dogfood"~~
-- Claude-Code-internal phrasing: ~~"agent-driven"~~, ~~"via the rector companion peer"~~
-- Any 8-character alphanumeric sequence that looks like a peer ID
-
-**Write instead:**
-- Generic adoption framing: "sourced from production dogfood", "real-world adoption feedback"
-- Named public contributors only (GitHub usernames, named downstream apps that consented to credit). Otherwise stay generic.
-- Technical reasoning (why the decision was made) without tying it to an internal session.
-
-Internal planning files (`internal/specs/*.md`) MAY reference peer IDs — they stay out of git history (`internal/` is gitignored). Only the release-notes file under `internal/release-notes-*.md` is under the public-artifact rule, since its body is what the user copies into the GitHub release.
-
-**Quick scrub before `Write`ing:** grep your draft for `peer`, `claude-peers`, `claude-code`, and any `[a-z0-9]{8}` sequence. Rewrite or delete if present.
 
 #### Preflight — three checks before `Write`
 
@@ -202,45 +176,32 @@ gh run list --commit "$SHA" --json name,status,conclusion
 
 Only when (1) status is empty, (2) echoes `pushed`, and (3) every run is `completed` + `{success, skipped}` may you `Write internal/release-notes-<version>.md`.
 
-#### Notes file format
+#### Drafting the body
 
-```markdown
-<!-- verified-sha: <full 40-char SHA from git rev-parse HEAD> -->
+Hand the body off to the `release-notes` skill. That skill decides whether this release warrants overriding GitHub's auto-generated format (it usually doesn't), how to layer Highlights / BREAKING / migration sections when override is justified, and how to phrase the version-matrix shift for the Laravel ecosystem.
 
-# <version>
+Three pre-release-specific overlays apply on top of whatever the `release-notes` skill produces:
 
-<one-paragraph summary — what's the headline?>
+1. **Pin the verified SHA in the very first line.** GitHub strips HTML comments when rendering the release body, so this is invisible to readers but greppable by step 8a:
 
-## What's new
+   ```
+   <!-- verified-sha: aab58d2aa7c6e3496d0eece82c18566e21a2e70a -->
+   ```
 
-- **<feature>** — what it does, why it matters. One bullet per user-visible feature.
+   The SHA is the exact `git rev-parse HEAD` step 6 proved green. Step 8a's pre-tag gate fails closed if the notes-file SHA does not match the live remote tip (i.e. someone landed more commits between draft and tag).
 
-## Bug fixes
+2. **Public-artifact scrub.** `internal/release-notes-*.md` is copied verbatim into the public GitHub release (and from there into `CHANGELOG.md` + Packagist). Internal planning files (`internal/specs/*.md`) are gitignored and may freely reference internal workflow identifiers; the release-notes file is *not* internal. Before `Write`, scrub the draft for:
 
-- <fix> — what was broken and how it was caught (link to spec / issue if external).
+   - Peer / instance / channel framing: ~~"sourced from peer `e0cp6lq3`"~~, ~~"via claude-peers dogfood"~~
+   - Claude-Code-internal phrasing: ~~"agent-driven"~~, ~~"via the rector companion peer"~~
+   - Any 8-character alphanumeric sequence that looks like a peer ID (`grep -E '[a-z0-9]{8}'`)
+   - Bare `claude-code`, `claude-peers`, or `peer` mentions
 
-## Notes
+   Replace with neutral framing: "sourced from production dogfood", "real-world adoption feedback", named public contributors only (GitHub usernames / consenting downstream apps), or technical reasoning untethered from any internal session.
 
-- BREAKING: ... (only if applicable)
-- Migration steps for existing installs (only if needed)
-```
-
-**Pin the verified SHA in the very first line.** GitHub strips HTML comments when rendering the release body, so this is invisible to readers but greppable by step 8a:
-
-```
-<!-- verified-sha: aab58d2aa7c6e3496d0eece82c18566e21a2e70a -->
-```
-
-The SHA is the exact `git rev-parse HEAD` step 6 proved green. Step 8a's pre-tag gate fails closed if the notes-file SHA does not match the live remote tip (i.e. someone landed more commits between draft and tag).
-
-#### Match the existing tone
-
-Read the previous release notes in `internal/release-notes-*.md` for tone, structure, and length. The package's notes lean concise — bullets over paragraphs, technical reasoning where it changes behavior, no marketing language.
-
-#### CI handles two things automatically — do not do them manually
-
-- **`CHANGELOG.md`** is prepended with the release body by `.github/workflows/update-changelog.yml` on release publish.
-- If the package ships any benchmark workflow that decorates the release body, do not paste benchmark numbers manually — let CI fill the markers.
+3. **CI handles two things automatically — do not do them manually:**
+   - `CHANGELOG.md` is prepended with the release body by `.github/workflows/update-changelog.yml` on release publish.
+   - If the package ships any benchmark workflow that decorates the release body, do not paste benchmark numbers manually — let CI fill the markers.
 
 Once the file is written, report "ready to tag" with the SHA and the version, and stop. The user takes it from there.
 
@@ -317,19 +278,19 @@ If red:
 
 ## Quick Reference
 
-| Step              | Command                                                                                  | Pass criteria                                 |
-|-------------------|------------------------------------------------------------------------------------------|-----------------------------------------------|
-| 1. Rector         | `vendor/bin/rector process \|\| true`                                                    | 0 files changed                               |
-| 2. Pint           | `vendor/bin/pint --dirty --format agent \|\| true`                                       | clean                                         |
-| 3. Tests          | `vendor/bin/pest \|\| true`                                                              | 0 failures                                    |
-| 4. PHPStan        | `vendor/bin/phpstan analyse --memory-limit=2G \|\| true`                                 | 0 errors                                      |
-| 5a. README        | manual scan vs `git log <last-tag>..HEAD`                                                | no stale claims; new behavior listed          |
-| 5b. Boost docs    | `vendor/bin/testbench package-boost:sync \|\| true`                                      | `.ai/` ↔ generated files in sync              |
-| **commit + push** | `git add <paths>` → `git commit` → `git push origin main`                                | HEAD pushed to `origin/main`                  |
-| 6. CI green-light | `gh run list --commit "$(git rev-parse HEAD)"` all complete + no failure                 | every run for the SHA in `{success, skipped}` |
-| 7. Release notes  | preflight (clean tree + pushed + CI green) → `Write internal/release-notes-<version>.md` | first line is `<!-- verified-sha: $SHA -->`   |
-| 8a. Pre-tag gate  | one-liner asserts notes-SHA, live-remote tip, CI-still-green before `gh release create`  | prints `OK to tag`                            |
-| 8b. Post-tag watch | `gh run list --commit "$TAG_SHA"` filtered by `headBranch == $TAG`                      | tag-ref + release-event workflows all green   |
+| Step               | Command                                                                                       | Pass criteria                                 |
+|--------------------|-----------------------------------------------------------------------------------------------|-----------------------------------------------|
+| 1. Rector          | `vendor/bin/rector process \|\| true`                                                         | 0 files changed                               |
+| 2. Pint            | `vendor/bin/pint --dirty --format agent \|\| true`                                            | clean                                         |
+| 3. Tests           | `vendor/bin/pest \|\| true`                                                                   | 0 failures                                    |
+| 4. PHPStan         | `vendor/bin/phpstan analyse --memory-limit=2G \|\| true`                                      | 0 errors                                      |
+| 5a. README         | apply `readme` skill staleness audit vs `git log <last-tag>..HEAD`                            | no stale claims; new behavior listed          |
+| 5b. Boost docs     | `vendor/bin/testbench package-boost:sync \|\| true`                                           | `.ai/` ↔ generated files in sync              |
+| **commit + push**  | `git add <paths>` → `git commit` → `git push origin main`                                     | HEAD pushed to `origin/main`                  |
+| 6. CI green-light  | `gh run list --commit "$(git rev-parse HEAD)"` all complete + no failure                      | every run for the SHA in `{success, skipped}` |
+| 7. Release notes   | preflight + `release-notes` skill body → `Write internal/release-notes-<version>.md`          | first line is `<!-- verified-sha: $SHA -->`   |
+| 8a. Pre-tag gate   | one-liner asserts notes-SHA, live-remote tip, CI-still-green before `gh release create`       | prints `OK to tag`                            |
+| 8b. Post-tag watch | `gh run list --commit "$TAG_SHA"` filtered by `headBranch == $TAG`                            | tag-ref + release-event workflows all green   |
 
 ## Important
 

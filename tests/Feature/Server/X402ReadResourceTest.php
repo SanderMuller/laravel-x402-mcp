@@ -5,7 +5,6 @@ declare(strict_types=1);
 use Illuminate\Contracts\Config\Repository;
 use Laravel\Mcp\Request as McpRequest;
 use Laravel\Mcp\Response;
-use Laravel\Mcp\Server\Contracts\Errable;
 use Laravel\Mcp\Server\Contracts\HasUriTemplate;
 use Laravel\Mcp\Server\Resource;
 use Laravel\Mcp\Server\ServerContext;
@@ -25,22 +24,6 @@ use X402\Protocol\PaymentSignature;
 use X402\Replay\InMemoryNonceStore;
 
 #[X402Price(amount: '0.01', asset: 'USDC', network: 'base')]
-final class PaidEchoResource extends Resource
-{
-    protected string $uri = 'mcp://test/paid-echo';
-
-    public function description(): string
-    {
-        return 'Paid echo resource for tests.';
-    }
-
-    public function handle(): Response
-    {
-        return Response::text('paid resource body');
-    }
-}
-
-#[X402Price(amount: '0.01', asset: 'USDC', network: 'base')]
 final class PaidEchoResource2 extends Resource
 {
     protected string $uri = 'mcp://test/paid-2';
@@ -53,21 +36,6 @@ final class PaidEchoResource2 extends Resource
     public function handle(): Response
     {
         return Response::text('paid resource body 2');
-    }
-}
-
-final class FreeEchoResource extends Resource
-{
-    protected string $uri = 'mcp://test/free-echo';
-
-    public function description(): string
-    {
-        return 'Free echo resource for tests.';
-    }
-
-    public function handle(): Response
-    {
-        return Response::text('free resource body');
     }
 }
 

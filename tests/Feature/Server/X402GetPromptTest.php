@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 use Illuminate\Contracts\Config\Repository;
 use Laravel\Mcp\Response;
-use Laravel\Mcp\Server\Contracts\Errable;
 use Laravel\Mcp\Server\Prompt;
 use Laravel\Mcp\Server\ServerContext;
 use Laravel\Mcp\Server\Transport\JsonRpcRequest;
@@ -22,20 +21,6 @@ use X402\Protocol\PaymentSignature;
 use X402\Replay\InMemoryNonceStore;
 
 #[X402Price(amount: '0.01', asset: 'USDC', network: 'base')]
-final class PaidEchoPrompt extends Prompt
-{
-    public function description(): string
-    {
-        return 'Paid echo prompt for tests.';
-    }
-
-    public function handle(): Response
-    {
-        return Response::text('paid prompt body');
-    }
-}
-
-#[X402Price(amount: '0.01', asset: 'USDC', network: 'base')]
 final class PaidOtherPrompt extends Prompt
 {
     public function description(): string
@@ -46,19 +31,6 @@ final class PaidOtherPrompt extends Prompt
     public function handle(): Response
     {
         return Response::text('paid other prompt body');
-    }
-}
-
-final class FreeEchoPrompt extends Prompt
-{
-    public function description(): string
-    {
-        return 'Free echo prompt for tests.';
-    }
-
-    public function handle(): Response
-    {
-        return Response::text('free prompt body');
     }
 }
 

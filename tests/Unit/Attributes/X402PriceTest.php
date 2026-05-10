@@ -111,3 +111,24 @@ it('resolveFor returns null when the primitive is not gated', function (): void 
 
     expect(X402Price::resolveFor($tool))->toBeNull();
 });
+
+it('toMetaArray emits amount + asset + network and omits payTo when null', function (): void {
+    $price = new X402Price(amount: '0.10', asset: 'USDC', network: 'base');
+
+    expect($price->toMetaArray())->toBe([
+        'amount' => '0.10',
+        'asset' => 'USDC',
+        'network' => 'base',
+    ]);
+});
+
+it('toMetaArray includes payTo when overridden', function (): void {
+    $price = new X402Price(amount: '5.00', asset: 'USDC', network: 'base', payTo: '0x000000000000000000000000000000000000beef');
+
+    expect($price->toMetaArray())->toBe([
+        'amount' => '5.00',
+        'asset' => 'USDC',
+        'network' => 'base',
+        'payTo' => '0x000000000000000000000000000000000000beef',
+    ]);
+});

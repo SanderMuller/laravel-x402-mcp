@@ -2,7 +2,7 @@
 
 Gate [`laravel/mcp`](https://github.com/laravel/mcp) tools behind x402 stablecoin payments. Conformant with the x402 v2 MCP transport spec (`specs/transports-v2/mcp.md`).
 
-Bridge between [`sandermuller/laravel-x402`](https://github.com/sandermuller/laravel-x402) (^0.5) and `laravel/mcp` (^0.6 || ^0.7). Annotate paid tools with the `#[X402Price]` attribute. Agents include the signed payment payload in `params._meta["x402/payment"]` (JSON-RPC level — not an HTTP header). The advertised price travels back on `tools/list` via `_meta["x402/price"]`.
+Bridge between [`sandermuller/laravel-x402`](https://github.com/sandermuller/laravel-x402) (^0.5) and `laravel/mcp` (^0.6 || ^0.7). Annotate paid tools with the `#[X402Price]` attribute. Agents include the signed payment payload in `params._meta["x402/payment"]` (JSON-RPC level — not an HTTP header). The advertised price travels back on `tools/list` / `resources/list` / `prompts/list` via `_meta["x402/price"]`.
 
 ## Install
 
@@ -66,11 +66,13 @@ final class MyMcpServer extends Server
 }
 ```
 
-The `WithX402Payment` trait registers four method handlers when the server starts:
+The `WithX402Payment` trait registers six method handlers when the server starts:
 
 - `tools/list` → `X402ListTools` — advertises priced tools as `_meta["x402/price"]` so agents know the price *before* invoking.
 - `tools/call` → `X402CallTool` — gates priced tools behind a verified + settled payment; passes free tools through unchanged.
+- `resources/list` → `X402ListResources` — advertises priced resources as `_meta["x402/price"]` (templates excluded; they list under `resources/templates/list`).
 - `resources/read` → `X402ReadResource` — gates priced `Resource` subclasses. The resource's URI is the challenge resource verbatim (no synthetic prefix).
+- `prompts/list` → `X402ListPrompts` — advertises priced prompts as `_meta["x402/price"]`.
 - `prompts/get` → `X402GetPrompt` — gates priced `Prompt` subclasses. Synthesises `mcp://prompt/{name}` for the challenge resource.
 
 The trait hooks on `start()`, not `boot()`, so any subclass overriding `boot()` still gets x402 gating without having to know about this trait. If you want to opt *out* of trait defaults — for example to register your own `tools/call` handler — use `addMethod()` inside `boot()`; explicit registrations made there win over the trait. If you also override `start()`, call `parent::start()` so the trait runs.
@@ -129,7 +131,7 @@ Per [`specs/transports-v2/mcp.md`](https://github.com/coinbase/x402/blob/main/sp
 | Client → Server (payment) | `params._meta["x402/payment"]` | `PaymentPayload` v2 envelope |
 | Server → Client (settled) | `result._meta["x402/payment-response"]` | `{success, transaction, network, payer}` |
 | Server → Client (required) | `result.structuredContent` + `result.content[0].text` + `result.isError = true` | `PaymentRequired` |
-| Server → Client (advertised) | `tools[i]._meta["x402/price"]` on `tools/list` | `{amount, asset, network[, payTo]}` |
+| Server → Client (advertised) | `_meta["x402/price"]` on each item of `tools/list` / `resources/list` / `prompts/list` | `{amount, asset, network[, payTo]}` |
 
 The same `_meta["x402/payment"]` / `_meta["x402/payment-response"]` envelope and the same 402 challenge shape apply to `resources/read` and `prompts/get` — the gating mirrors `tools/call` 1:1, only the challenge resource URI differs (resources use the request URI verbatim; prompts use `mcp://prompt/{name}`).
 
