@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.0 - 2026-05-10
+
+### 0.3.0
+
+Extends price discovery from `tools/list` to all three gated primitives — agents now see `_meta["x402/price"]` on `resources/list` and `prompts/list` too, so they can budget across tools, paid resources, and paid prompts in the same listing pass without a wasted 402 round-trip on the first call. Tests pass on the CI matrix.
+
+#### What's new
+
+- **Price discovery on `resources/list` and `prompts/list`** — `WithX402Payment` now registers six method handlers (the previous four plus `X402ListResources` and `X402ListPrompts`). Each priced `Resource` / `Prompt` carries `_meta["x402/price"]` with the same `{amount, asset, network[, payTo]}` envelope as `tools/list`. Free entries pass through unchanged. Resource templates are filtered by the parent `ServerContext::resources()` and listed under `resources/templates/list` — pricing on a template still gates every concrete URI.
+- **`X402Price` public surface — `META_KEY` + `toMetaArray()`** — `'x402/price'` is now `X402Price::META_KEY`, single source for downstream code that builds or reads the meta envelope. The new `toMetaArray()` instance method emits the wire-format block (omitting `payTo` when not overridden).
+
+#### Internal improvements
+
+- **`AdvertisesX402Price` trait** consolidates the annotate-then-paginate body across `X402ListTools`, `X402ListResources`, `X402ListPrompts`. Each handler is now a one-line `handle()` selecting its primitive collection + paginator label; the per-class `META_KEY` constant and `annotatePrice` body have been removed.
+- **Shared base test fixtures** (`PaidEcho*` / `FreeEcho*` for `Tool` / `Resource` / `Prompt`) moved into `tests/Support/X402TestHelpers.php`. Each list-handler test now runs in isolation — previously, single-file pest runs failed because the fixtures lived in a sibling handler test.
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-x402-mcp/compare/0.2.0...0.3.0
+
 ## 0.2.0 - 2026-05-10
 
 ### What's new
@@ -29,15 +47,21 @@ First release. Bridge between [`laravel/mcp`](https://github.com/laravel/mcp) (`
 ### What's new
 
 - **`#[X402Price]` attribute** — annotate any `Laravel\Mcp\Server\Tool` subclass with `#[X402Price(amount: '0.01', asset: 'USDC', network: 'base', payTo: '0x…')]`. `payTo` is optional and falls back to the global `x402.recipient` config. Network slugs and CAIP-2 strings both supported.
+  
 - **`WithX402Payment` trait** — drop-in for any `Laravel\Mcp\Server\Server` subclass. Registers two JSON-RPC method handlers:
+  
   - `tools/list` → `X402ListTools` — advertises priced tools as `_meta["x402/price"]` (`{amount, asset, network[, payTo]}`) so agents discover prices before invoking and avoid wasted 402 round-trips.
   - `tools/call` → `X402CallTool` — verifies + settles via the bound `FacilitatorClient` for priced tools, runs free tools through the standard `CallTool`. On success, injects `result._meta["x402/payment-response"]` (settlement receipt). On failure, returns `result.isError = true` + `structuredContent: PaymentRequired` + `content[0].text` (JSON-stringified) per spec.
   - The trait hooks on `start()` *and* `handle()` (idempotent) so payment gating cannot be silently disabled by an unrelated `boot()` or `start()` override.
   
 - **Replay protection** — nonces are claimed *before* the facilitator settles via `laravel-x402`'s `NonceStoreContract`; concurrent attack requests with the same authorization are rejected without hitting the facilitator.
+  
 - **`x402-mcp:list-tools` console command** — operator visibility into which tools are gated and at what price. Mirrors `x402:list-routes` from `laravel-x402`. Honors `shouldRegister()` so the listing matches what `tools/list` actually exposes.
+  
 - **Stdio + HTTP transport support** — `_meta["x402/payment"]` is a JSON-RPC field, not an HTTP envelope, so paid tools work on stdio as well as HTTP.
+  
 - **Testbench-backed test suite** — full HTTP round-trip coverage via `Mcp::web()` + `X402::fake()`, plus unit coverage for the trait, attribute reflection, list advertisement, replay rejection, and challenge shape.
+  
 
 ### Notes
 
