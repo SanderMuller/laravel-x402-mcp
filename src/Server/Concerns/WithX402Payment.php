@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace X402\Laravel\Mcp\Server\Concerns;
 
 use X402\Laravel\Mcp\Server\Methods\X402CallTool;
+use X402\Laravel\Mcp\Server\Methods\X402GetPrompt;
 use X402\Laravel\Mcp\Server\Methods\X402ListTools;
+use X402\Laravel\Mcp\Server\Methods\X402ReadResource;
 
 /**
- * Drop-in trait for `Laravel\Mcp\Server\Server` subclasses. Registers two
+ * Drop-in trait for `Laravel\Mcp\Server\Server` subclasses. Registers four
  * JSON-RPC method handlers when the host server runs:
  *
  *   - `tools/list` → `X402ListTools` — advertises priced tools as
@@ -16,6 +18,12 @@ use X402\Laravel\Mcp\Server\Methods\X402ListTools;
  *   - `tools/call` → `X402CallTool` — gates any tool annotated with
  *     `#[X402Price]` behind a verified + settled x402 payment. Tools
  *     without `#[X402Price]` pass through to the standard `CallTool`.
+ *   - `resources/read` → `X402ReadResource` — gates any `Resource`
+ *     annotated with `#[X402Price]`. The resource's URI is used as the
+ *     challenge resource verbatim. Free resources pass through.
+ *   - `prompts/get` → `X402GetPrompt` — gates any `Prompt` annotated
+ *     with `#[X402Price]`. Synthesises `mcp://prompt/{name}` for the
+ *     challenge resource. Free prompts pass through.
  *
  * **Override-resilient by design.** PHP traits lose to subclass method
  * declarations, so a single hook point can be silently shadowed by a
@@ -59,5 +67,7 @@ trait WithX402Payment
     {
         $this->addMethod('tools/list', X402ListTools::class);
         $this->addMethod('tools/call', X402CallTool::class);
+        $this->addMethod('resources/read', X402ReadResource::class);
+        $this->addMethod('prompts/get', X402GetPrompt::class);
     }
 }

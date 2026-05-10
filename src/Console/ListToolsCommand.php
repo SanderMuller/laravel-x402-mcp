@@ -7,35 +7,47 @@ namespace X402\Laravel\Mcp\Console;
 use Illuminate\Console\Command;
 use Illuminate\Container\Container;
 use Laravel\Mcp\Server;
+use Laravel\Mcp\Server\Primitive;
+use Laravel\Mcp\Server\Prompt;
+use Laravel\Mcp\Server\Resource;
 use Laravel\Mcp\Server\Tool;
 use ReflectionProperty;
 use X402\Laravel\Mcp\Attributes\X402Price;
 
 /**
- * Inspect a Server class and list its tools, marking which ones are
- * gated by `#[X402Price]` and at what price. Mirrors `x402:list-routes`
- * for the MCP transport.
+ * Inspect a Server class and list its tools, resources, and prompts —
+ * marking which are gated by `#[X402Price]` and at what price. Mirrors
+ * `x402:list-routes` for the MCP transport.
  *
  * Usage:
  *
  *   php artisan x402-mcp:list-tools "App\\Mcp\\Servers\\MyServer"
  *
- * **Resolution model:** the command reads the Server class' `$tools`
- * property *default* via reflection — it does not instantiate the Server.
- * This matches the laravel/mcp convention of declaring tools as
- * `protected array $tools = [...]`. Tools added dynamically in a
- * constructor or `boot()` override are not seen here.
+ * **Resolution model:** the command reads the Server class' `$tools` /
+ * `$resources` / `$prompts` property *defaults* via reflection — it does
+ * not instantiate the Server. This matches the laravel/mcp convention of
+ * declaring primitives as `protected array $tools = [...]` (etc.).
+ * Primitives added dynamically in a constructor or `boot()` override are
+ * not seen here.
  *
- * Each declared tool entry is resolved through the container so
- * `shouldRegister()` can be evaluated; tools that opt out of registration
- * are omitted, mirroring what `tools/list` would actually expose.
+ * Each declared entry is resolved through the container so
+ * `shouldRegister()` can be evaluated; primitives that opt out of
+ * registration are omitted, mirroring what the corresponding
+ * `tools/list` / `resources/list` / `prompts/list` endpoints
+ * would actually expose.
  */
 final class ListToolsCommand extends Command
 {
+    private const TYPE_TOOL = 'Tool';
+
+    private const TYPE_RESOURCE = 'Resource';
+
+    private const TYPE_PROMPT = 'Prompt';
+
     protected $signature = 'x402-mcp:list-tools
         {server : Fully-qualified Laravel\\Mcp\\Server subclass to inspect}';
 
-    protected $description = 'List MCP tools on a server, with x402 prices for gated tools.';
+    protected $description = 'List MCP tools, resources, and prompts on a server, with x402 prices for gated entries.';
 
     public function handle(): int
     {
@@ -47,46 +59,63 @@ final class ListToolsCommand extends Command
             return self::FAILURE;
         }
 
-        $tools = $this->resolveTools($serverClass);
+        $rows = [];
 
-        if ($tools === []) {
-            $this->info(sprintf('No tools registered on %s.', $serverClass));
+        foreach ($this->resolvePrimitives($serverClass, 'tools', Tool::class) as $primitive) {
+            $rows[] = $this->describePrimitive(self::TYPE_TOOL, $primitive);
+        }
+
+        foreach ($this->resolvePrimitives($serverClass, 'resources', Resource::class) as $primitive) {
+            $rows[] = $this->describePrimitive(self::TYPE_RESOURCE, $primitive);
+        }
+
+        foreach ($this->resolvePrimitives($serverClass, 'prompts', Prompt::class) as $primitive) {
+            $rows[] = $this->describePrimitive(self::TYPE_PROMPT, $primitive);
+        }
+
+        if ($rows === []) {
+            $this->info(sprintf('No tools, resources, or prompts registered on %s.', $serverClass));
 
             return self::SUCCESS;
         }
 
-        $rows = array_map($this->describeTool(...), $tools);
-
-        $this->table(['Tool', 'Class', 'Amount', 'Asset', 'Network', 'PayTo'], $rows);
+        $this->table(['Type', 'Name', 'Class', 'Amount', 'Asset', 'Network', 'PayTo'], $rows);
 
         return self::SUCCESS;
     }
 
     /**
+     * @template TPrimitive of Primitive
+     *
      * @param  class-string<Server>  $serverClass
-     * @return list<Tool>
+     * @param  class-string<TPrimitive>  $expectedType
+     * @return list<TPrimitive>
      */
-    private function resolveTools(string $serverClass): array
+    private function resolvePrimitives(string $serverClass, string $property, string $expectedType): array
     {
-        $reflection = new ReflectionProperty($serverClass, 'tools');
+        if (! property_exists($serverClass, $property)) {
+            return [];
+        }
 
-        /** @var list<Tool|class-string<Tool>> $defaults */
+        $reflection = new ReflectionProperty($serverClass, $property);
+
+        /** @var list<TPrimitive|class-string<TPrimitive>> $defaults */
         $defaults = $reflection->getDefaultValue() ?? [];
 
         $resolved = [];
         $container = Container::getInstance();
 
         foreach ($defaults as $entry) {
-            $instance = $entry instanceof Tool
+            $instance = $entry instanceof $expectedType
                 ? $entry
                 : (is_string($entry) && class_exists($entry) ? $container->make($entry) : null);
 
-            if (! $instance instanceof Tool) {
+            if (! $instance instanceof $expectedType) {
                 continue;
             }
 
-            // Mirror ServerContext::tools() — a tool with shouldRegister() === false
-            // never reaches `tools/list`, so the listing must hide it too.
+            // Mirror ServerContext::*() — a primitive with shouldRegister() === false
+            // never reaches the *list endpoint, so the listing must hide it too.
             if (! $instance->eligibleForRegistration()) {
                 continue;
             }
@@ -98,16 +127,17 @@ final class ListToolsCommand extends Command
     }
 
     /**
-     * @return array<int, string>
+     * @return list<string>
      */
-    private function describeTool(Tool $tool): array
+    private function describePrimitive(string $type, Primitive $primitive): array
     {
-        $price = X402Price::resolveFor($tool);
+        $price = X402Price::resolveFor($primitive);
 
         if (! $price instanceof X402Price) {
             return [
-                $tool->name(),
-                $tool::class,
+                $type,
+                $primitive->name(),
+                $primitive::class,
                 '(free)',
                 '',
                 '',
@@ -116,8 +146,9 @@ final class ListToolsCommand extends Command
         }
 
         return [
-            $tool->name(),
-            $tool::class,
+            $type,
+            $primitive->name(),
+            $primitive::class,
             $price->amount,
             $price->asset,
             $price->network,

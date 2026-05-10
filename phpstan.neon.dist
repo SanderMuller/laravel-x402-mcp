@@ -92,6 +92,16 @@ parameters:
             identifier: return.type
             path: src/Server/Methods/X402CallTool.php
             reportUnmatched: false
+        # Same Generator generic variance as X402CallTool — toJsonRpcStreamedResponse
+        # returns Generator<mixed, JsonRpcResponse> not Generator<int, JsonRpcResponse>.
+        -
+            identifier: return.type
+            path: src/Server/Methods/X402ReadResource.php
+            reportUnmatched: false
+        -
+            identifier: return.type
+            path: src/Server/Methods/X402GetPrompt.php
+            reportUnmatched: false
         # CursorPaginator's $items param is Collection<int, mixed>; ServerContext::tools()
         # returns Collection<int, Tool>. PHP generics are invariant — the laravel/mcp
         # parent ListTools has the same call shape. Same interop-noise exemption as

@@ -5,20 +5,23 @@ declare(strict_types=1);
 namespace X402\Laravel\Mcp\Attributes;
 
 use Attribute;
-use Laravel\Mcp\Server\Tool;
+use Laravel\Mcp\Server\Primitive;
 use ReflectionClass;
 
 /**
- * Declare a price for a Laravel MCP tool.
+ * Declare a price for a Laravel MCP primitive — `Tool`, `Resource`, or
+ * `Prompt`. The attribute targets a class; the gating handlers
+ * (`X402CallTool` / `X402ReadResource` / `X402GetPrompt`) reflect for it
+ * at request time.
  *
  * Usage:
  *
  *   #[X402Price(amount: '0.01', asset: 'USDC', network: 'base')]
  *   final class FetchPremiumData extends \Laravel\Mcp\Server\Tool { ... }
  *
- * Resolved at boot via PHP reflection — same pattern as laravel/mcp's own
- * `RendersApp` attribute, so the tool's `_meta.x402` block can be attached
- * without subclassing.
+ * Resolved at request time via PHP reflection — same pattern as
+ * laravel/mcp's own `RendersApp` attribute, so the primitive's
+ * `_meta["x402/price"]` block can be attached without subclassing.
  */
 #[Attribute(Attribute::TARGET_CLASS)]
 final readonly class X402Price
@@ -37,13 +40,15 @@ final readonly class X402Price
     ) {}
 
     /**
-     * Pull the `#[X402Price]` instance off a Tool, or `null` when the tool
-     * is not gated. Centralizes the reflection dance shared by `X402CallTool`,
-     * `X402ListTools`, and `ListToolsCommand`.
+     * Pull the `#[X402Price]` instance off any MCP primitive (Tool,
+     * Resource, or Prompt — anything extending `Laravel\Mcp\Server\Primitive`),
+     * or `null` when the primitive is not gated. Centralizes the
+     * reflection dance shared by `X402CallTool`, `X402ListTools`,
+     * `X402ReadResource`, `X402GetPrompt`, and `ListToolsCommand`.
      */
-    public static function resolveFor(Tool $tool): ?self
+    public static function resolveFor(Primitive $primitive): ?self
     {
-        $attributes = (new ReflectionClass($tool))->getAttributes(self::class);
+        $attributes = (new ReflectionClass($primitive))->getAttributes(self::class);
 
         if ($attributes === []) {
             return null;

@@ -7,6 +7,8 @@ use Illuminate\Support\Facades\Date;
 use Laravel\Mcp\Facades\Mcp;
 use Laravel\Mcp\Response;
 use Laravel\Mcp\Server;
+use Laravel\Mcp\Server\Prompt;
+use Laravel\Mcp\Server\Resource;
 use Laravel\Mcp\Server\Tool;
 use X402\Laravel\Facades\X402;
 use X402\Laravel\Mcp\Attributes\X402Price;
@@ -26,6 +28,36 @@ final class RoundtripPaidTool extends Tool
     }
 }
 
+#[X402Price(amount: '0.02', asset: 'USDC', network: 'base')]
+final class RoundtripPaidResource extends Resource
+{
+    protected string $uri = 'mcp://roundtrip/paid-resource';
+
+    public function description(): string
+    {
+        return 'paid roundtrip resource';
+    }
+
+    public function handle(): Response
+    {
+        return Response::text('paid resource body');
+    }
+}
+
+#[X402Price(amount: '0.03', asset: 'USDC', network: 'base')]
+final class RoundtripPaidPrompt extends Prompt
+{
+    public function description(): string
+    {
+        return 'paid roundtrip prompt';
+    }
+
+    public function handle(): Response
+    {
+        return Response::text('paid prompt body');
+    }
+}
+
 final class RoundtripServer extends Server
 {
     use WithX402Payment;
@@ -33,6 +65,16 @@ final class RoundtripServer extends Server
     /** @var array<int, class-string<Tool>|Tool> */
     protected array $tools = [
         RoundtripPaidTool::class,
+    ];
+
+    /** @var array<int, class-string<Server\Resource>|Server\Resource> */
+    protected array $resources = [
+        RoundtripPaidResource::class,
+    ];
+
+    /** @var array<int, class-string<Prompt>|Prompt> */
+    protected array $prompts = [
+        RoundtripPaidPrompt::class,
     ];
 }
 
@@ -214,4 +256,152 @@ it('advertises x402/price under _meta on tools/list responses', function (): voi
         'asset' => 'USDC',
         'network' => 'base',
     ]);
+});
+
+it('settles a paid resource via the bound facilitator and returns the receipt under result._meta', function (): void {
+    $fake = X402::fake();
+
+    $response = $this->postJson('/mcp-roundtrip', [
+        'jsonrpc' => '2.0',
+        'id' => 5,
+        'method' => 'resources/read',
+        'params' => [
+            'uri' => 'mcp://roundtrip/paid-resource',
+            '_meta' => [
+                'x402/payment' => roundtripPaymentMeta(),
+            ],
+        ],
+    ]);
+
+    $response->assertOk();
+
+    /** @var array<string, mixed> $body */
+    $body = $response->json();
+
+    /** @var array<string, mixed> $result */
+    $result = $body['result'];
+
+    expect($result['isError'] ?? false)->toBeFalse();
+
+    /** @var array<string, mixed> $meta */
+    $meta = $result['_meta'];
+
+    expect($meta['x402/payment-response'] ?? null)->toBe([
+        'success' => true,
+        'transaction' => '0xtxhash',
+        'network' => 'eip155:8453',
+        'payer' => '0xpayer',
+    ]);
+
+    $fake->assertVerified('mcp://roundtrip/paid-resource');
+    $fake->assertSettled('mcp://roundtrip/paid-resource');
+});
+
+it('serves a 402 challenge over the HTTP transport for a paid resource with no payment meta', function (): void {
+    $fake = X402::fake();
+
+    $response = $this->postJson('/mcp-roundtrip', [
+        'jsonrpc' => '2.0',
+        'id' => 6,
+        'method' => 'resources/read',
+        'params' => [
+            'uri' => 'mcp://roundtrip/paid-resource',
+        ],
+    ]);
+
+    $response->assertOk();
+
+    /** @var array<string, mixed> $body */
+    $body = $response->json();
+
+    /** @var array<string, mixed> $result */
+    $result = $body['result'];
+
+    expect($result['isError'] ?? null)->toBeTrue();
+
+    /** @var array<string, mixed> $structured */
+    $structured = $result['structuredContent'];
+
+    /** @var array<string, mixed> $resourceInfo */
+    $resourceInfo = $structured['resource'];
+
+    // Resource challenge URI is the request URI verbatim, not synthesised.
+    expect($resourceInfo['url'] ?? null)->toBe('mcp://roundtrip/paid-resource')
+        ->and($fake->verifyCalls())->toBeEmpty()
+        ->and($fake->settleCalls())->toBeEmpty();
+});
+
+it('settles a paid prompt via the bound facilitator and returns the receipt under result._meta', function (): void {
+    $fake = X402::fake();
+
+    $response = $this->postJson('/mcp-roundtrip', [
+        'jsonrpc' => '2.0',
+        'id' => 7,
+        'method' => 'prompts/get',
+        'params' => [
+            'name' => 'roundtrip-paid-prompt',
+            'arguments' => (object) [],
+            '_meta' => [
+                'x402/payment' => roundtripPaymentMeta(),
+            ],
+        ],
+    ]);
+
+    $response->assertOk();
+
+    /** @var array<string, mixed> $body */
+    $body = $response->json();
+
+    /** @var array<string, mixed> $result */
+    $result = $body['result'];
+
+    expect($result['isError'] ?? false)->toBeFalse();
+
+    /** @var array<string, mixed> $meta */
+    $meta = $result['_meta'];
+
+    expect($meta['x402/payment-response'] ?? null)->toBe([
+        'success' => true,
+        'transaction' => '0xtxhash',
+        'network' => 'eip155:8453',
+        'payer' => '0xpayer',
+    ]);
+
+    $fake->assertVerified('mcp://prompt/roundtrip-paid-prompt');
+    $fake->assertSettled('mcp://prompt/roundtrip-paid-prompt');
+});
+
+it('serves a 402 challenge over the HTTP transport for a paid prompt with no payment meta', function (): void {
+    $fake = X402::fake();
+
+    $response = $this->postJson('/mcp-roundtrip', [
+        'jsonrpc' => '2.0',
+        'id' => 8,
+        'method' => 'prompts/get',
+        'params' => [
+            'name' => 'roundtrip-paid-prompt',
+            'arguments' => (object) [],
+        ],
+    ]);
+
+    $response->assertOk();
+
+    /** @var array<string, mixed> $body */
+    $body = $response->json();
+
+    /** @var array<string, mixed> $result */
+    $result = $body['result'];
+
+    expect($result['isError'] ?? null)->toBeTrue();
+
+    /** @var array<string, mixed> $structured */
+    $structured = $result['structuredContent'];
+
+    /** @var array<string, mixed> $resourceInfo */
+    $resourceInfo = $structured['resource'];
+
+    // Prompt challenge URI is synthesised as `mcp://prompt/{name}`.
+    expect($resourceInfo['url'] ?? null)->toBe('mcp://prompt/roundtrip-paid-prompt')
+        ->and($fake->verifyCalls())->toBeEmpty()
+        ->and($fake->settleCalls())->toBeEmpty();
 });

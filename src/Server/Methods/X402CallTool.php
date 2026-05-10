@@ -9,30 +9,33 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Config\Repository;
-use Illuminate\Support\Facades\Date;
 use Illuminate\Validation\ValidationException;
 use Laravel\Mcp\Response;
 use Laravel\Mcp\ResponseFactory;
+use Laravel\Mcp\Server\Exceptions\JsonRpcException;
 use Laravel\Mcp\Server\Methods\CallTool;
 use Laravel\Mcp\Server\ServerContext;
 use Laravel\Mcp\Server\Tool;
 use Laravel\Mcp\Server\Transport\JsonRpcRequest;
 use Laravel\Mcp\Server\Transport\JsonRpcResponse;
 use Laravel\Mcp\Support\ValidationMessages;
+use Throwable;
 use X402\Errors\ErrorReason;
 use X402\Exceptions\InvalidPaymentException;
 use X402\Facilitator\FacilitatorClient;
 use X402\Facilitator\SettleResult;
 use X402\Laravel\Mcp\Attributes\X402Price;
-use X402\Laravel\Mcp\Support\NetworkResolver;
+use X402\Laravel\Mcp\Server\Cache\CacheScope;
+use X402\Laravel\Mcp\Server\Cache\PaidToolResponseCache;
+use X402\Laravel\Mcp\Server\Concerns\PaymentGate;
 use X402\Laravel\Support\ConfigReader;
-use X402\Laravel\Support\PriceParser;
 use X402\Protocol\PaymentRequired;
 use X402\Protocol\PaymentSignature;
 use X402\Protocol\ResourceInfo;
 use X402\Replay\NonceStoreContract;
 use X402\Schemes\Evm\ExactScheme;
-use X402\Support\JsonReader;
+use X402\Schemes\Evm\NetworkRegistry;
+use X402\Support\PriceParser;
 
 /**
  * Drop-in replacement for `Laravel\Mcp\Server\Methods\CallTool` that gates
@@ -68,14 +71,13 @@ use X402\Support\JsonReader;
  */
 final class X402CallTool extends CallTool
 {
-    private const META_REQUEST_KEY = 'x402/payment';
-
-    private const META_RESPONSE_KEY = 'x402/payment-response';
+    use PaymentGate;
 
     public function __construct(
         private readonly FacilitatorClient $facilitator,
         private readonly NonceStoreContract $nonceStore,
         private readonly Repository $config,
+        private readonly PaidToolResponseCache $responseCache,
     ) {}
 
     public function handle(JsonRpcRequest $request, ServerContext $context): Generator|JsonRpcResponse
@@ -96,17 +98,43 @@ final class X402CallTool extends CallTool
         $paymentMeta = $this->readPaymentMeta($request);
 
         if ($paymentMeta === null) {
-            return $this->paymentRequiredResult($request, $tool, $challenge, 'Payment required.');
+            return $this->paymentRequiredResult($request, $challenge, 'Payment required.');
         }
 
         try {
-            $signature = $this->hydrateSignature($paymentMeta);
+            $signature = PaymentSignature::fromArray($paymentMeta);
             (new ExactScheme())->verifyShape($signature, $challenge);
+        } catch (InvalidPaymentException $invalidPaymentException) {
+            return $this->paymentRequiredResult(
+                $request,
+                $challenge,
+                $invalidPaymentException->getMessage(),
+                $invalidPaymentException->reason?->value,
+            );
+        }
+
+        // Idempotent retry — if a previous settled call's response was
+        // dropped on the wire, the agent retries with the same signed
+        // authorization. `lookup()` runs BEFORE `guardReplay()` so a
+        // legitimate retry hits the cache instead of being rejected by
+        // the nonce store. Scope binds method + tool + canonical-args
+        // hash; signature binds forge-resistance via the EIP-3009
+        // signature field.
+        $scope = $this->scopeFor($request, $tool);
+        $cached = $this->responseCache->lookup($scope, $signature);
+
+        if ($cached !== null) {
+            /** @var array<string, mixed> $resultPayload */
+            $resultPayload = $cached['result'];
+
+            return JsonRpcResponse::result($request->id, $resultPayload);
+        }
+
+        try {
             $this->guardReplay($signature);
         } catch (InvalidPaymentException $invalidPaymentException) {
             return $this->paymentRequiredResult(
                 $request,
-                $tool,
                 $challenge,
                 $invalidPaymentException->getMessage(),
                 $invalidPaymentException->reason?->value,
@@ -117,7 +145,6 @@ final class X402CallTool extends CallTool
         if (! $verify->isValid) {
             return $this->paymentRequiredResult(
                 $request,
-                $tool,
                 $challenge,
                 $verify->invalidReason ?? ErrorReason::UnexpectedVerifyError->value,
             );
@@ -127,97 +154,46 @@ final class X402CallTool extends CallTool
         if (! $settle->success) {
             return $this->paymentRequiredResult(
                 $request,
-                $tool,
                 $challenge,
                 $settle->errorReason ?? ErrorReason::UnexpectedSettleError->value,
             );
         }
 
-        return $this->runToolWithReceipt($request, $tool, $settle);
-    }
+        $response = $this->runToolWithReceipt($request, $tool, $settle);
 
-    /**
-     * @return array<string, mixed>|null
-     */
-    private function readPaymentMeta(JsonRpcRequest $request): ?array
-    {
-        $meta = $request->params['_meta'] ?? null;
-        if (! is_array($meta)) {
-            return null;
-        }
+        // Streamed responses (`Generator`) cannot be cached — there's no
+        // atomic snapshot to replay. Tool errors (`isError: true`) also
+        // skip the cache: a tool that errored on a settled payment may
+        // have transient state, and forcing the retry to re-hit a fresh
+        // handler is safer than replaying the error body.
+        if ($response instanceof JsonRpcResponse) {
+            $body = $response->toArray();
+            $resultPayload = $body['result'] ?? null;
 
-        $payment = $meta[self::META_REQUEST_KEY] ?? null;
-        if (! is_array($payment)) {
-            return null;
-        }
-
-        return $this->stringKeyed($payment);
-    }
-
-    /**
-     * Narrow a JSON-decoded array to string-keyed entries — runtime
-     * guarantee from `json_decode($s, true)` on an object input, but
-     * PHPStan can't infer it from `mixed`.
-     *
-     * @param  array<int|string, mixed>  $arr
-     * @return array<string, mixed>
-     */
-    private function stringKeyed(array $arr): array
-    {
-        $out = [];
-        foreach ($arr as $k => $v) {
-            if (is_string($k)) {
-                $out[$k] = $v;
+            if (is_array($resultPayload) && ($resultPayload['isError'] ?? false) !== true) {
+                $this->responseCache->store($scope, $signature, ['result' => $resultPayload]);
             }
         }
 
-        return $out;
+        return $response;
     }
 
-    /**
-     * @param  array<string, mixed>  $paymentMeta
-     */
-    private function hydrateSignature(array $paymentMeta): PaymentSignature
+    private function scopeFor(JsonRpcRequest $request, Tool $tool): CacheScope
     {
-        $version = JsonReader::int($paymentMeta, 'x402Version', default: 2);
+        // Pass the raw decoded array — including any integer keys produced
+        // by `json_decode` from numeric-string JSON keys (`{"1":"a"}` →
+        // `[1 => "a"]`). Filtering to string keys would alias distinct
+        // numeric-keyed bags into the same hash and let a settled call
+        // satisfy a retry against a different argument bag (Codex review
+        // fix).
+        $argsRaw = $request->params['arguments'] ?? [];
+        $arguments = is_array($argsRaw) ? $argsRaw : [];
 
-        $accepted = null;
-        $acceptedRaw = $paymentMeta['accepted'] ?? null;
-        if (is_array($acceptedRaw)) {
-            $accepted = $this->hydrateAccepted($this->stringKeyed($acceptedRaw));
-        }
-
-        return new PaymentSignature(
-            scheme: JsonReader::string($paymentMeta, 'scheme', 'x402/payment'),
-            network: JsonReader::string($paymentMeta, 'network', 'x402/payment'),
-            payload: JsonReader::array($paymentMeta, 'payload', 'x402/payment'),
-            x402Version: $version,
-            accepted: $accepted,
-        );
-    }
-
-    /**
-     * @param  array<string, mixed>  $accepted
-     */
-    private function hydrateAccepted(array $accepted): PaymentRequired
-    {
-        $amount = JsonReader::stringOrNull($accepted, 'amount')
-            ?? JsonReader::string($accepted, 'maxAmountRequired', 'accepted');
-
-        return new PaymentRequired(
-            scheme: JsonReader::string($accepted, 'scheme', 'accepted'),
-            network: JsonReader::string($accepted, 'network', 'accepted'),
-            amount: $amount,
-            asset: JsonReader::string($accepted, 'asset', 'accepted'),
-            payTo: JsonReader::string($accepted, 'payTo', 'accepted'),
-            maxTimeoutSeconds: JsonReader::int($accepted, 'maxTimeoutSeconds', default: 60),
-            extra: JsonReader::arrayOrEmpty($accepted, 'extra'),
-        );
+        return CacheScope::forToolCall($tool->name(), $arguments);
     }
 
     private function paymentRequiredResult(
         JsonRpcRequest $request,
-        Tool $tool,
         PaymentRequired $challenge,
         string $reason,
         ?string $errorReason = null,
@@ -250,7 +226,10 @@ final class X402CallTool extends CallTool
         $factory = (new ResponseFactory(Response::error($textBody)))
             ->withStructuredContent($payload);
 
-        return $this->toJsonRpcResponse($request, $factory, $this->serializable($tool));
+        // Use the trait's primitive-neutral serializable instead of
+        // `$this->serializable($tool)` — keeps the 402 envelope shape
+        // identical across all three handlers (Tool, Resource, Prompt).
+        return $this->toJsonRpcResponse($request, $factory, $this->paymentRequiredSerializable());
     }
 
     /**
@@ -270,19 +249,31 @@ final class X402CallTool extends CallTool
             $response = Response::error(ValidationMessages::from($validationException));
         }
 
-        $receipt = [
-            'success' => true,
-            'transaction' => $settle->transaction,
-            'network' => $settle->network,
-            'payer' => $settle->payer,
-        ];
+        $receipt = $this->buildReceipt($settle);
 
         if (is_iterable($response)) {
-            // Streamed responses don't get receipt injection in v0.1 — the
-            // receipt would have to land in the FINAL chunk, which needs
-            // generator interception. Tracked as a v0.x follow-up.
+            // Streamed responses: the receipt rides on the terminal frame
+            // because `toJsonRpcStreamedResponse` invokes `$serializable`
+            // exactly once on the final `toJsonRpcResponse` call (see vendor
+            // `Concerns/InteractsWithResponses.php:88`). `streamingSerializable`
+            // wraps the parent's serializer to set `_meta["x402/payment-response"]`
+            // on the factory before delegating.
+            //
+            // `wrapStreamingForReceipt` sits between the tool's iterable and
+            // the upstream streaming method. It catches every Throwable from
+            // iteration (except JsonRpcException, which is a transport-level
+            // signal that must propagate as a JSON-RPC error envelope) and
+            // yields a terminal Response::error so the upstream's terminal
+            // toJsonRpcResponse still runs streamingSerializable and stamps
+            // the receipt. Settled payments always emit settlement proof,
+            // mirroring the non-streaming branch above and the README's
+            // "Post-settle tool failure" guarantee.
             /** @var iterable<Response|ResponseFactory|string> $response */
-            return $this->toJsonRpcStreamedResponse($request, $response, $this->serializable($tool));
+            return $this->toJsonRpcStreamedResponse(
+                $request,
+                $this->wrapStreamingForReceipt($response),
+                $this->streamingSerializable($tool, $receipt),
+            );
         }
 
         if ($response instanceof ResponseFactory) {
@@ -298,6 +289,49 @@ final class X402CallTool extends CallTool
         $factory->withMeta(self::META_RESPONSE_KEY, $receipt);
 
         return $this->toJsonRpcResponse($request, $factory, $this->serializable($tool));
+    }
+
+    /**
+     * @param  array{success: true, transaction: string, network: string, payer: string}  $receipt
+     * @return callable(ResponseFactory): array<string, mixed>
+     */
+    private function streamingSerializable(Tool $tool, array $receipt): callable
+    {
+        $base = $this->serializable($tool);
+
+        return static function (ResponseFactory $factory) use ($base, $receipt): array {
+            $factory->withMeta(self::META_RESPONSE_KEY, $receipt);
+
+            /** @var array<string, mixed> */
+            return $base($factory);
+        };
+    }
+
+    /**
+     * Wrap the tool's iterable so any Throwable thrown mid-stream becomes a
+     * terminal Response::error frame instead of propagating past the
+     * streaming method. Lets the receipt always land on a settled payment.
+     *
+     * JsonRpcException is the explicit non-catch — it represents a
+     * tool-authored protocol error that must surface as a JSON-RPC error
+     * envelope, not a tool-result envelope.
+     *
+     * @param  iterable<Response|ResponseFactory|string>  $responses
+     * @return Generator<int, Response|ResponseFactory|string>
+     */
+    private function wrapStreamingForReceipt(iterable $responses): Generator
+    {
+        try {
+            foreach ($responses as $response) {
+                yield $response;
+            }
+        } catch (JsonRpcException $jsonRpcException) {
+            throw $jsonRpcException;
+        } catch (ValidationException $validationException) {
+            yield Response::error(ValidationMessages::from($validationException));
+        } catch (Throwable $throwable) {
+            yield Response::error($throwable->getMessage());
+        }
     }
 
     private function resolveTool(JsonRpcRequest $request, ServerContext $context): ?Tool
@@ -333,7 +367,7 @@ final class X402CallTool extends CallTool
 
         return new PaymentRequired(
             scheme: 'exact',
-            network: NetworkResolver::toCaip2($price->network),
+            network: NetworkRegistry::toCaip2($price->network),
             amount: $atomic,
             asset: $assetAddress,
             payTo: $price->payTo ?? ConfigReader::string($this->config, 'x402.recipient'),
@@ -345,22 +379,5 @@ final class X402CallTool extends CallTool
                 'version' => is_string($version) ? $version : '2',
             ],
         );
-    }
-
-    private function guardReplay(PaymentSignature $signature): void
-    {
-        $auth = JsonReader::arrayOrEmpty($signature->payload, 'authorization');
-        $from = JsonReader::stringOrNull($auth, 'from') ?? '';
-        $nonce = JsonReader::stringOrNull($auth, 'nonce') ?? '';
-        $validBefore = JsonReader::int($auth, 'validBefore', default: 0);
-        $ttl = max(60, $validBefore - Date::now()
-            ->getTimestamp() + 30);
-
-        if (! $this->nonceStore->claim($signature->network, $from, $nonce, $ttl)) {
-            throw InvalidPaymentException::with(
-                ErrorReason::ReplayAttempt,
-                'Nonce already used (replay attempt).',
-            );
-        }
     }
 }

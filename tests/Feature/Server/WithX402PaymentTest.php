@@ -8,7 +8,9 @@ use Laravel\Mcp\Server\Methods\Ping;
 use Laravel\Mcp\Server\Transport\FakeTransporter;
 use X402\Laravel\Mcp\Server\Concerns\WithX402Payment;
 use X402\Laravel\Mcp\Server\Methods\X402CallTool;
+use X402\Laravel\Mcp\Server\Methods\X402GetPrompt;
 use X402\Laravel\Mcp\Server\Methods\X402ListTools;
+use X402\Laravel\Mcp\Server\Methods\X402ReadResource;
 
 /**
  * @return array<string, class-string>
@@ -37,6 +39,8 @@ it('replaces tools/list and tools/call when start() runs and leaves the rest of 
 
     expect($methods['tools/call'] ?? null)->toBe(X402CallTool::class)
         ->and($methods['tools/list'] ?? null)->toBe(X402ListTools::class)
+        ->and($methods['resources/read'] ?? null)->toBe(X402ReadResource::class)
+        ->and($methods['prompts/get'] ?? null)->toBe(X402GetPrompt::class)
         ->and($methods['ping'] ?? null)->toBe(Ping::class);
 });
 
@@ -79,7 +83,9 @@ it('keeps x402 gating active when a subclass overrides boot() without calling bo
     $methods = readServerMethods($server);
 
     expect($methods['tools/call'] ?? null)->toBe(X402CallTool::class)
-        ->and($methods['tools/list'] ?? null)->toBe(X402ListTools::class);
+        ->and($methods['tools/list'] ?? null)->toBe(X402ListTools::class)
+        ->and($methods['resources/read'] ?? null)->toBe(X402ReadResource::class)
+        ->and($methods['prompts/get'] ?? null)->toBe(X402GetPrompt::class);
 });
 
 it('lets a user explicit addMethod inside boot() override the trait default', function (): void {
@@ -126,5 +132,7 @@ it('still registers x402 handlers via handle() when a subclass shadows start()',
     $methods = readServerMethods($server);
 
     expect($methods['tools/call'] ?? null)->toBe(X402CallTool::class)
-        ->and($methods['tools/list'] ?? null)->toBe(X402ListTools::class);
+        ->and($methods['tools/list'] ?? null)->toBe(X402ListTools::class)
+        ->and($methods['resources/read'] ?? null)->toBe(X402ReadResource::class)
+        ->and($methods['prompts/get'] ?? null)->toBe(X402GetPrompt::class);
 });
