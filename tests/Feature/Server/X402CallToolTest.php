@@ -491,8 +491,8 @@ it('pins the parent CallTool invocation contract for AuthorizationException', fu
     // AuthorizationException catch landed in 0.7. Under prefer-lowest
     // (0.6.x) the parent rethrows; the parity test below still
     // verifies *our* catch shape against that older parent.
-    $reflection = new \ReflectionMethod(CallTool::class, 'handle');
-    $body = file_get_contents($reflection->getFileName());
+    $filename = (new \ReflectionMethod(CallTool::class, 'handle'))->getFileName();
+    $body = is_string($filename) ? file_get_contents($filename) : false;
     if (! is_string($body) || ! str_contains($body, 'AuthorizationException $authException')) {
         test()->markTestSkipped('parent CallTool::handle predates the AuthorizationException catch (laravel/mcp < 0.7)');
     }
