@@ -1,0 +1,13 @@
+parameters:
+	ignoreErrors:
+		-
+			rawMessage: Cannot access property $not on mixed.
+			identifier: property.nonObject
+			count: 1
+			path: tests/Arch/StructureTest.php
+
+		-
+			rawMessage: Access to an undefined property Pest\PendingCalls\TestCall::$app.
+			identifier: property.notFound
+			count: 15
+			path: tests/Feature/X402McpServiceProviderTest.php

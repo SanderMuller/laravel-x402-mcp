@@ -189,13 +189,6 @@ final readonly class PaidToolResponseCache
     }
 
     /**
-     * Reject snapshots that don't carry the `result` envelope we serve
-     * on replay. A poisoned cache entry falls through to the inner
-     * handler instead of replaying garbage.
-     *
-     * @param  array<array-key, mixed>  $cached
-     */
-    /**
      * @return array<string, mixed>
      */
     private function logContext(CacheScope $scope, PaymentSignature $signature, string $key): array
@@ -208,6 +201,10 @@ final readonly class PaidToolResponseCache
     }
 
     /**
+     * Reject snapshots that don't carry the `result` envelope we serve
+     * on replay. A poisoned cache entry falls through to the inner
+     * handler instead of replaying garbage.
+     *
      * @param  array<array-key, mixed>  $cached
      */
     private function isValidSnapshot(array $cached): bool

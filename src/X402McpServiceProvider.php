@@ -12,6 +12,7 @@ use Psr\Log\LoggerInterface;
 use X402\Laravel\Cache\LaravelPsr16Bridge;
 use X402\Laravel\Mcp\Console\ListToolsCommand;
 use X402\Laravel\Mcp\Server\Cache\PaidToolResponseCache;
+use X402\Laravel\Mcp\Server\ChallengeFactory;
 use X402\Laravel\Support\ConfigReader;
 
 /**
@@ -31,6 +32,10 @@ final class X402McpServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        $this->app->singleton(ChallengeFactory::class, static function (Application $app): ChallengeFactory {
+            return new ChallengeFactory($app->make(ConfigRepository::class));
+        });
+
         $this->app->singleton(PaidToolResponseCache::class, static function (Application $app): PaidToolResponseCache {
             $config = $app->make(ConfigRepository::class);
             $cacheFactory = $app->make(CacheFactory::class);

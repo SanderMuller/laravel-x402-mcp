@@ -31,7 +31,6 @@ AGENTS.md
 CLAUDE.md
 
 # Misc
-phpunit.xml
 phpstan.neon
 /docs
 /coverage

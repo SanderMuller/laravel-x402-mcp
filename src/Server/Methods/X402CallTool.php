@@ -8,7 +8,6 @@ use Generator;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Container\Container;
-use Illuminate\Contracts\Config\Repository;
 use Illuminate\Validation\ValidationException;
 use Laravel\Mcp\Response;
 use Laravel\Mcp\ResponseFactory;
@@ -20,22 +19,15 @@ use Laravel\Mcp\Server\Transport\JsonRpcRequest;
 use Laravel\Mcp\Server\Transport\JsonRpcResponse;
 use Laravel\Mcp\Support\ValidationMessages;
 use Throwable;
-use X402\Errors\ErrorReason;
-use X402\Exceptions\InvalidPaymentException;
 use X402\Facilitator\FacilitatorClient;
 use X402\Facilitator\SettleResult;
 use X402\Laravel\Mcp\Attributes\X402Price;
 use X402\Laravel\Mcp\Server\Cache\CacheScope;
 use X402\Laravel\Mcp\Server\Cache\PaidToolResponseCache;
+use X402\Laravel\Mcp\Server\ChallengeFactory;
 use X402\Laravel\Mcp\Server\Concerns\PaymentGate;
-use X402\Laravel\Support\ConfigReader;
 use X402\Protocol\PaymentRequired;
-use X402\Protocol\PaymentSignature;
-use X402\Protocol\ResourceInfo;
 use X402\Replay\NonceStoreContract;
-use X402\Schemes\Evm\ExactScheme;
-use X402\Schemes\Evm\NetworkRegistry;
-use X402\Support\PriceParser;
 
 /**
  * Drop-in replacement for `Laravel\Mcp\Server\Methods\CallTool` that gates
@@ -68,6 +60,13 @@ use X402\Support\PriceParser;
  * rejected without hitting the facilitator. If the facilitator's settle
  * fails after the claim, the nonce is burned and the user must
  * regenerate.
+ *
+ * **Streaming receipt asymmetry:** unlike `X402ReadResource` and
+ * `X402GetPrompt`, this handler wraps the tool's iterable via
+ * `wrapStreamingForReceipt` so settled payments still emit a receipt
+ * even when the tool throws mid-stream. The other two handlers rely on
+ * vendor `toJsonRpcStreamedResponse`, which only catches
+ * Auth/Authn/Validation. Asymmetry is intentional and pinned by tests.
  */
 final class X402CallTool extends CallTool
 {
@@ -76,8 +75,8 @@ final class X402CallTool extends CallTool
     public function __construct(
         private readonly FacilitatorClient $facilitator,
         private readonly NonceStoreContract $nonceStore,
-        private readonly Repository $config,
         private readonly PaidToolResponseCache $responseCache,
+        private readonly ChallengeFactory $challenges,
     ) {}
 
     public function handle(JsonRpcRequest $request, ServerContext $context): Generator|JsonRpcResponse
@@ -88,148 +87,33 @@ final class X402CallTool extends CallTool
             return parent::handle($request, $context);
         }
 
-        $price = $this->priceAttribute($tool);
-
-        if (! $price instanceof X402Price) {
-            return parent::handle($request, $context);
-        }
-
-        $challenge = $this->buildChallenge($price, $tool->name());
-        $paymentMeta = $this->readPaymentMeta($request);
-
-        if ($paymentMeta === null) {
-            return $this->paymentRequiredResult($request, $challenge, 'Payment required.');
-        }
-
-        try {
-            $signature = PaymentSignature::fromArray($paymentMeta);
-            (new ExactScheme())->verifyShape($signature, $challenge);
-        } catch (InvalidPaymentException $invalidPaymentException) {
-            return $this->paymentRequiredResult(
-                $request,
-                $challenge,
-                $invalidPaymentException->getMessage(),
-                $invalidPaymentException->reason?->value,
-            );
-        }
-
-        // Idempotent retry — if a previous settled call's response was
-        // dropped on the wire, the agent retries with the same signed
-        // authorization. `lookup()` runs BEFORE `guardReplay()` so a
-        // legitimate retry hits the cache instead of being rejected by
-        // the nonce store. Scope binds method + tool + canonical-args
-        // hash; signature binds forge-resistance via the EIP-3009
-        // signature field.
-        $scope = $this->scopeFor($request, $tool);
-        $cached = $this->responseCache->lookup($scope, $signature);
-
-        if ($cached !== null) {
-            /** @var array<string, mixed> $resultPayload */
-            $resultPayload = $cached['result'];
-
-            return JsonRpcResponse::result($request->id, $resultPayload);
-        }
-
-        try {
-            $this->guardReplay($signature);
-        } catch (InvalidPaymentException $invalidPaymentException) {
-            return $this->paymentRequiredResult(
-                $request,
-                $challenge,
-                $invalidPaymentException->getMessage(),
-                $invalidPaymentException->reason?->value,
-            );
-        }
-
-        $verify = $this->facilitator->verify($signature, $challenge);
-        if (! $verify->isValid) {
-            return $this->paymentRequiredResult(
-                $request,
-                $challenge,
-                $verify->invalidReason ?? ErrorReason::UnexpectedVerifyError->value,
-            );
-        }
-
-        $settle = $this->facilitator->settle($signature, $challenge);
-        if (! $settle->success) {
-            return $this->paymentRequiredResult(
-                $request,
-                $challenge,
-                $settle->errorReason ?? ErrorReason::UnexpectedSettleError->value,
-            );
-        }
-
-        $response = $this->runToolWithReceipt($request, $tool, $settle);
-
-        // Streamed responses (`Generator`) cannot be cached — there's no
-        // atomic snapshot to replay. Tool errors (`isError: true`) also
-        // skip the cache: a tool that errored on a settled payment may
-        // have transient state, and forcing the retry to re-hit a fresh
-        // handler is safer than replaying the error body.
-        if ($response instanceof JsonRpcResponse) {
-            $body = $response->toArray();
-            $resultPayload = $body['result'] ?? null;
-
-            if (is_array($resultPayload) && ($resultPayload['isError'] ?? false) !== true) {
-                $this->responseCache->store($scope, $signature, ['result' => $resultPayload]);
-            }
-        }
-
-        return $response;
+        return $this->runPaymentGate(
+            $request,
+            $tool,
+            scopeFor: fn (Tool $t): CacheScope => CacheScope::forToolCall($t->name(), $this->arguments($request)),
+            runWithReceipt: fn (Tool $t, SettleResult $s): Generator|JsonRpcResponse => $this->runToolWithReceipt($request, $t, $s),
+            buildChallenge: fn (X402Price $p, Tool $t): PaymentRequired => $this->challenges->build(
+                $p,
+                'mcp://tool/' . $t->name(),
+                $p->asset . ' payment for MCP tool ' . $t->name(),
+            ),
+            priceAbsentPassthrough: fn (): Generator|JsonRpcResponse => parent::handle($request, $context),
+        );
     }
 
-    private function scopeFor(JsonRpcRequest $request, Tool $tool): CacheScope
+    /**
+     * @return array<int|string, mixed>
+     */
+    private function arguments(JsonRpcRequest $request): array
     {
         // Pass the raw decoded array — including any integer keys produced
         // by `json_decode` from numeric-string JSON keys (`{"1":"a"}` →
         // `[1 => "a"]`). Filtering to string keys would alias distinct
         // numeric-keyed bags into the same hash and let a settled call
-        // satisfy a retry against a different argument bag (Codex review
-        // fix).
+        // satisfy a retry against a different argument bag.
         $argsRaw = $request->params['arguments'] ?? [];
-        $arguments = is_array($argsRaw) ? $argsRaw : [];
 
-        return CacheScope::forToolCall($tool->name(), $arguments);
-    }
-
-    private function paymentRequiredResult(
-        JsonRpcRequest $request,
-        PaymentRequired $challenge,
-        string $reason,
-        ?string $errorReason = null,
-    ): JsonRpcResponse {
-        // Spec v2 §5.1: PaymentRequired body fields are
-        // `{x402Version, resource, accepts, error?, extensions?}`. The
-        // `errorReason` canonical enum lives on /verify and /settle response
-        // shapes ONLY — putting it on the body here would be non-conformant.
-        // Fold the canonical reason into the human-readable `error` field.
-        $errorText = $errorReason !== null
-            ? sprintf('%s (%s)', $reason, $errorReason)
-            : $reason;
-
-        $payload = [
-            'x402Version' => 2,
-            'error' => $errorText,
-            'accepts' => [$challenge->toArrayV2()],
-        ];
-
-        $resourceInfo = $challenge->resourceInfo();
-        if ($resourceInfo instanceof ResourceInfo) {
-            $payload['resource'] = $resourceInfo->toArray();
-        }
-
-        $textBody = json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
-
-        // Spec mandates BOTH structuredContent (for x402-aware clients) AND
-        // content[0].text (JSON-stringified, for clients that haven't
-        // adopted structuredContent yet). `Response::error` sets isError: true.
-        $factory = (new ResponseFactory(Response::error($textBody)))
-            ->withStructuredContent($payload);
-
-        // Use the trait's primitive-neutral serializable instead of
-        // `$this->serializable($tool)` — keeps the 402 envelope shape
-        // identical across all three handlers (Tool, Resource, Prompt).
-        return $this->toJsonRpcResponse($request, $factory, $this->paymentRequiredSerializable());
+        return is_array($argsRaw) ? $argsRaw : [];
     }
 
     /**
@@ -272,7 +156,7 @@ final class X402CallTool extends CallTool
             return $this->toJsonRpcStreamedResponse(
                 $request,
                 $this->wrapStreamingForReceipt($response),
-                $this->streamingSerializable($tool, $receipt),
+                $this->streamingSerializable($this->serializable($tool), $receipt),
             );
         }
 
@@ -289,22 +173,6 @@ final class X402CallTool extends CallTool
         $factory->withMeta(self::META_RESPONSE_KEY, $receipt);
 
         return $this->toJsonRpcResponse($request, $factory, $this->serializable($tool));
-    }
-
-    /**
-     * @param  array{success: true, transaction: string, network: string, payer: string}  $receipt
-     * @return callable(ResponseFactory): array<string, mixed>
-     */
-    private function streamingSerializable(Tool $tool, array $receipt): callable
-    {
-        $base = $this->serializable($tool);
-
-        return static function (ResponseFactory $factory) use ($base, $receipt): array {
-            $factory->withMeta(self::META_RESPONSE_KEY, $receipt);
-
-            /** @var array<string, mixed> */
-            return $base($factory);
-        };
     }
 
     /**
@@ -342,42 +210,5 @@ final class X402CallTool extends CallTool
         }
 
         return $context->tools()->first(static fn (Tool $t): bool => $t->name() === $name);
-    }
-
-    private function priceAttribute(Tool $tool): ?X402Price
-    {
-        return X402Price::resolveFor($tool);
-    }
-
-    private function buildChallenge(X402Price $price, string $resource): PaymentRequired
-    {
-        $assetConfig = ConfigReader::array($this->config, 'x402.asset');
-        $eip712Raw = $assetConfig['eip712'] ?? [];
-        $eip712 = is_array($eip712Raw) ? $eip712Raw : [];
-
-        $decimalsRaw = $assetConfig['decimals'] ?? 6;
-        $decimals = is_int($decimalsRaw) ? $decimalsRaw : 6;
-        $atomic = PriceParser::toAtomic($price->amount, $decimals);
-
-        $address = $assetConfig['address'] ?? '';
-        $assetAddress = is_string($address) ? $address : '';
-
-        $name = $eip712['name'] ?? '';
-        $version = $eip712['version'] ?? '2';
-
-        return new PaymentRequired(
-            scheme: 'exact',
-            network: NetworkRegistry::toCaip2($price->network),
-            amount: $atomic,
-            asset: $assetAddress,
-            payTo: $price->payTo ?? ConfigReader::string($this->config, 'x402.recipient'),
-            maxTimeoutSeconds: ConfigReader::int($this->config, 'x402.max_timeout_seconds', 60),
-            resource: 'mcp://tool/' . $resource,
-            description: $price->asset . ' payment for MCP tool ' . $resource,
-            extra: [
-                'name' => is_string($name) ? $name : '',
-                'version' => is_string($version) ? $version : '2',
-            ],
-        );
     }
 }

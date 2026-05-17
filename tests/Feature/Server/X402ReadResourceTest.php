@@ -2,13 +2,14 @@
 
 declare(strict_types=1);
 
-use Illuminate\Contracts\Config\Repository;
+use Illuminate\Auth\Access\AuthorizationException;
 use Laravel\Mcp\Request as McpRequest;
 use Laravel\Mcp\Response;
 use Laravel\Mcp\Server\Contracts\HasUriTemplate;
 use Laravel\Mcp\Server\Resource;
 use Laravel\Mcp\Server\ServerContext;
 use Laravel\Mcp\Server\Transport\JsonRpcRequest;
+use Laravel\Mcp\Server\Transport\JsonRpcResponse;
 use Laravel\Mcp\Support\UriTemplate;
 use X402\Facilitator\DiscoveryPage;
 use X402\Facilitator\DiscoveryQuery;
@@ -18,6 +19,7 @@ use X402\Facilitator\SupportedKinds;
 use X402\Facilitator\VerifyResult;
 use X402\Laravel\Mcp\Attributes\X402Price;
 use X402\Laravel\Mcp\Server\Cache\PaidToolResponseCache;
+use X402\Laravel\Mcp\Server\ChallengeFactory;
 use X402\Laravel\Mcp\Server\Methods\X402ReadResource;
 use X402\Protocol\PaymentRequired;
 use X402\Protocol\PaymentSignature;
@@ -69,8 +71,8 @@ function makeReadResource(?FacilitatorClient $facilitator = null): X402ReadResou
     return new X402ReadResource(
         $facilitator ?? new StubFacilitator(),
         new InMemoryNonceStore(),
-        config: resolve(Repository::class),
         responseCache: resolve(PaidToolResponseCache::class),
+        challenges: resolve(ChallengeFactory::class),
     );
 }
 
@@ -299,4 +301,116 @@ it('preserves HasUriTemplate variable binding under x402 gating — uses parent:
     $contents = $result['contents'];
     expect($contents[0]['text'] ?? null)->toBe('paid templated body for id=42')
         ->and($contents[0]['uri'] ?? null)->toBe($concreteUri);
+});
+
+#[X402Price(amount: '0.01', asset: 'USDC', network: 'base')]
+final class PaidStreamingThrowsRuntimeResource extends Resource
+{
+    protected string $uri = 'mcp://test/paid-streaming-throws-runtime-resource';
+
+    public function description(): string
+    {
+        return 'Paid streaming resource that yields one notification then throws RuntimeException — pins the asymmetry vs X402CallTool.';
+    }
+
+    /**
+     * @return Generator<int, Response>
+     */
+    public function handle(): Generator
+    {
+        yield Response::notification('progress', ['percent' => 50]);
+
+        throw new RuntimeException('mid-stream generic resource failure');
+    }
+}
+
+it('does NOT wrap mid-stream Throwables (asymmetry vs X402CallTool) — generic exceptions propagate past the receipt', function (): void {
+    // Pinned by Codex review (§2.6): X402CallTool wraps via
+    // wrapStreamingForReceipt and stamps the receipt on a terminal error
+    // frame for any Throwable. X402ReadResource intentionally does NOT
+    // wrap — vendor toJsonRpcStreamedResponse only catches Auth/Authn/
+    // Validation, so generic Throwables propagate. This test pins the
+    // intentional regression surface so a future "consistency pass"
+    // doesn't silently extend the wrapper to all three handlers.
+    $rpcRequest = makeReadResourceRequest('mcp://test/paid-streaming-throws-runtime-resource', [
+        '_meta' => ['x402/payment' => buildPaymentMeta('0x000000000000000000000000000000000000beef')],
+    ]);
+
+    $generator = makeReadResource()->handle(
+        $rpcRequest,
+        makeResourceContext([new PaidStreamingThrowsRuntimeResource()]),
+    );
+
+    expect($generator)->toBeInstanceOf(Generator::class);
+
+    $threw = false;
+    try {
+        /** @var Generator<int, mixed> $generator */
+        iterator_to_array($generator, preserve_keys: false);
+    } catch (RuntimeException $runtimeException) {
+        $threw = true;
+        expect($runtimeException->getMessage())->toBe('mid-stream generic resource failure');
+    }
+
+    expect($threw)->toBeTrue('Expected the generic mid-stream Throwable to propagate past the receipt.');
+});
+
+#[X402Price(amount: '0.01', asset: 'USDC', network: 'base')]
+final class PaidStreamingThrowsAuthResource extends Resource
+{
+    protected string $uri = 'mcp://test/paid-streaming-throws-auth-resource';
+
+    public function description(): string
+    {
+        return 'Paid streaming resource that yields one notification then throws AuthorizationException — exercises the vendor-caught path.';
+    }
+
+    /**
+     * @return Generator<int, Response>
+     */
+    public function handle(): Generator
+    {
+        yield Response::notification('progress', ['percent' => 50]);
+
+        throw new AuthorizationException('mid-stream auth fail');
+    }
+}
+
+it('stamps the receipt on the terminal error frame for vendor-caught mid-stream AuthorizationException (pins shared streamingSerializable contract)', function (): void {
+    // Codex-flagged regression surface: the refactor moved receipt
+    // stamping into PaymentGate::streamingSerializable. If the closure
+    // capture or self::META_RESPONSE_KEY constant lookup drifted,
+    // receipt delivery would silently break for the Auth/Authn/Validation
+    // path that vendor toJsonRpcStreamedResponse catches and re-emits as
+    // a terminal error frame. Pin the wire shape here so a future trait
+    // edit can't break it without a test failure.
+    $rpcRequest = makeReadResourceRequest('mcp://test/paid-streaming-throws-auth-resource', [
+        '_meta' => ['x402/payment' => buildPaymentMeta('0x000000000000000000000000000000000000beef')],
+    ]);
+
+    $generator = makeReadResource()->handle(
+        $rpcRequest,
+        makeResourceContext([new PaidStreamingThrowsAuthResource()]),
+    );
+
+    expect($generator)->toBeInstanceOf(Generator::class);
+
+    /** @var Generator<int, JsonRpcResponse> $generator */
+    $frames = iterator_to_array($generator, preserve_keys: false);
+
+    // Two frames: progress notification + terminal frame.
+    expect($frames)->toHaveCount(2);
+
+    // Terminal frame: the receipt MUST be present in `_meta`. Vendor
+    // `ReadResource::serializable` produces `{contents: [...]}` without
+    // an `isError` key, so we assert the receipt itself rather than
+    // envelope-shape fields the parent serializer never emits.
+    $terminal = $frames[1]->toArray();
+
+    /** @var array<string, mixed> $result */
+    $result = $terminal['result'];
+
+    /** @var array<string, mixed> $meta */
+    $meta = $result['_meta'];
+    expect($meta['x402/payment-response'] ?? null)->toBe(expectedReceipt());
 });

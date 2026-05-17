@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 use Illuminate\Auth\Access\AuthorizationException;
-use Illuminate\Contracts\Config\Repository;
 use Illuminate\Http\Request;
 use Laravel\Mcp\Response;
 use Laravel\Mcp\Server\Exceptions\JsonRpcException;
@@ -20,6 +19,7 @@ use X402\Facilitator\SupportedKinds;
 use X402\Facilitator\VerifyResult;
 use X402\Laravel\Mcp\Attributes\X402Price;
 use X402\Laravel\Mcp\Server\Cache\PaidToolResponseCache;
+use X402\Laravel\Mcp\Server\ChallengeFactory;
 use X402\Laravel\Mcp\Server\Methods\X402CallTool;
 use X402\Protocol\PaymentRequired;
 use X402\Protocol\PaymentSignature;
@@ -205,8 +205,8 @@ function makeCallTool(
     return new X402CallTool(
         $facilitator ?? new StubFacilitator(),
         $store ?? new InMemoryNonceStore(),
-        config: resolve(Repository::class),
         responseCache: $cache ?? resolve(PaidToolResponseCache::class),
+        challenges: resolve(ChallengeFactory::class),
     );
 }
 
