@@ -1,6 +1,6 @@
 {
     "name": "sandermuller/laravel-x402-mcp",
-    "description": "Bridge between laravel/mcp and laravel-x402 — gate MCP tools behind x402 stablecoin payments.",
+    "description": "Bridge between laravel/mcp and laravel-x402 \u2014 gate MCP tools behind x402 stablecoin payments.",
     "type": "library",
     "license": "MIT",
     "keywords": [
@@ -21,7 +21,7 @@
     "require": {
         "php": "^8.3",
         "sandermuller/laravel-x402": "^0.5",
-        "laravel/mcp": "^0.6 || ^0.7",
+        "laravel/mcp": "^0.7",
         "illuminate/support": "^11.0|^12.0"
     },
     "require-dev": {
