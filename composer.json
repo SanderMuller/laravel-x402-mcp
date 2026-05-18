@@ -45,7 +45,7 @@
         "phpstan/phpstan-strict-rules": "^2.0",
         "rector/rector": "^2.0",
         "rector/type-perfect": "^2.1",
-        "sandermuller/package-boost": "^0.14",
+        "sandermuller/package-boost": "^0.15",
         "spaze/phpstan-disallowed-calls": "^4.10",
         "symplify/phpstan-extensions": "^12.0",
         "tomasvotruba/cognitive-complexity": "^1.1",
@@ -74,7 +74,7 @@
     },
     "scripts": {
         "post-install-cmd": [
-            "if [ $COMPOSER_DEV_MODE -eq 1 ]; then vendor/bin/testbench package-boost:sync; fi"
+            "if [ $COMPOSER_DEV_MODE -eq 1 ]; then vendor/bin/boost sync; fi"
         ],
         "phpstan": "vendor/bin/phpstan analyse --memory-limit=2G",
         "phpstan-simplified": "vendor/bin/phpstan analyse --memory-limit=2G --error-format symplify",
@@ -83,7 +83,7 @@
         "rector": "vendor/bin/rector process",
         "test": "vendor/bin/pest",
         "test-coverage": "vendor/bin/pest --coverage",
-        "sync-ai": "vendor/bin/testbench package-boost:sync",
+        "sync-ai": "vendor/bin/boost sync",
         "qa": [
             "@rector",
             "@format",
