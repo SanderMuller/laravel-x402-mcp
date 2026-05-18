@@ -1,5 +1,10 @@
 # laravel-x402-mcp
 
+[![Latest Version on Packagist](https://img.shields.io/packagist/v/sandermuller/laravel-x402-mcp.svg?style=flat-square)](https://packagist.org/packages/sandermuller/laravel-x402-mcp)
+[![GitHub Tests Action Status](https://img.shields.io/github/actions/workflow/status/sandermuller/laravel-x402-mcp/run-tests.yml?branch=main&label=tests&style=flat-square)](https://github.com/sandermuller/laravel-x402-mcp/actions/workflows/run-tests.yml)
+[![Total Downloads](https://img.shields.io/packagist/dt/sandermuller/laravel-x402-mcp.svg?style=flat-square)](https://packagist.org/packages/sandermuller/laravel-x402-mcp)
+[![License](https://img.shields.io/packagist/l/sandermuller/laravel-x402-mcp.svg?style=flat-square)](LICENSE)
+
 Gate [`laravel/mcp`](https://github.com/laravel/mcp) tools behind x402 stablecoin payments. Conformant with the x402 v2 MCP transport spec (`specs/transports-v2/mcp.md`).
 
 Bridge between [`sandermuller/laravel-x402`](https://github.com/sandermuller/laravel-x402) (^0.5) and `laravel/mcp` (^0.6 || ^0.7). Annotate paid tools with the `#[X402Price]` attribute. Agents include the signed payment payload in `params._meta["x402/payment"]` (JSON-RPC level — not an HTTP header). The advertised price travels back on `tools/list` / `resources/list` / `prompts/list` via `_meta["x402/price"]`.
