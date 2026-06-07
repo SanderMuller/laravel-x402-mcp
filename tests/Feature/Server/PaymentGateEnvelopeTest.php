@@ -36,10 +36,9 @@ function envelopeKeys(array $result): array
 
 it('emits identical 402 envelope shape across X402CallTool, X402ReadResource, and X402GetPrompt', function (): void {
     $context = new ServerContext(
+        ...mcpServerIdentity(),
         supportedProtocolVersions: ['2025-11-25'],
         serverCapabilities: [],
-        serverName: 'test',
-        serverVersion: '0.0.1',
         instructions: '',
         maxPaginationLength: 50,
         defaultPaginationLength: 15,

@@ -15,10 +15,9 @@ use X402\Laravel\Mcp\Server\Methods\X402ListPrompts;
 function makePromptListContext(array $prompts): ServerContext
 {
     return new ServerContext(
+        ...mcpServerIdentity(),
         supportedProtocolVersions: ['2025-11-25'],
         serverCapabilities: [],
-        serverName: 'test',
-        serverVersion: '0.0.1',
         instructions: '',
         maxPaginationLength: 50,
         defaultPaginationLength: 15,

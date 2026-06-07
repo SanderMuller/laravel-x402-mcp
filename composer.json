@@ -54,7 +54,10 @@
     "autoload": {
         "psr-4": {
             "X402\\Laravel\\Mcp\\": "src/"
-        }
+        },
+        "files": [
+            "src/compat.php"
+        ]
     },
     "autoload-dev": {
         "psr-4": {

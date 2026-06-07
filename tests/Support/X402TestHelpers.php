@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Date;
 use Laravel\Mcp\Response;
+use Laravel\Mcp\Schema\Implementation;
 use Laravel\Mcp\Server\Prompt;
 use Laravel\Mcp\Server\Resource;
 use Laravel\Mcp\Server\Tool;
@@ -194,5 +195,26 @@ if (! function_exists('expectedReceipt')) {
             'network' => 'eip155:8453',
             'payer' => '0xpayer',
         ];
+    }
+}
+
+if (! function_exists('mcpServerIdentity')) {
+    /**
+     * laravel/mcp 0.7 replaced ServerContext's `serverName` + `serverVersion`
+     * constructor parameters with a single `Schema\Implementation` value object.
+     * Return the version-appropriate named arguments so test `ServerContext`
+     * construction works on both 0.6 and 0.7. Spread these FIRST in the
+     * constructor call — named-argument unpacking must precede explicit named
+     * arguments.
+     *
+     * @return array<string, mixed>
+     */
+    function mcpServerIdentity(): array
+    {
+        if (class_exists(Implementation::class)) {
+            return ['implementation' => new Implementation('test', '0.0.1')];
+        }
+
+        return ['serverName' => 'test', 'serverVersion' => '0.0.1'];
     }
 }

@@ -64,10 +64,9 @@ function makeGetPromptRequest(string $name, array $extraParams = []): JsonRpcReq
 function makePromptContext(array $prompts): ServerContext
 {
     return new ServerContext(
+        ...mcpServerIdentity(),
         supportedProtocolVersions: ['2025-11-25'],
         serverCapabilities: [],
-        serverName: 'test',
-        serverVersion: '0.0.1',
         instructions: '',
         maxPaginationLength: 50,
         defaultPaginationLength: 15,
