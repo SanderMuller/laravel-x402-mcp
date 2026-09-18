@@ -32,9 +32,7 @@ final class X402McpServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        $this->app->singleton(ChallengeFactory::class, static function (Application $app): ChallengeFactory {
-            return new ChallengeFactory($app->make(ConfigRepository::class));
-        });
+        $this->app->singleton(ChallengeFactory::class, static fn (Application $app): ChallengeFactory => new ChallengeFactory($app->make(ConfigRepository::class)));
 
         $this->app->singleton(PaidToolResponseCache::class, static function (Application $app): PaidToolResponseCache {
             $config = $app->make(ConfigRepository::class);

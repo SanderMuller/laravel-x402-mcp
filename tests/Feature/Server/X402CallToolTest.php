@@ -4,13 +4,14 @@ declare(strict_types=1);
 
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
+use Laravel\Mcp\Exceptions\JsonRpcException;
 use Laravel\Mcp\Response;
-use Laravel\Mcp\Server\Exceptions\JsonRpcException;
+use Laravel\Mcp\Schema\Implementation;
 use Laravel\Mcp\Server\Methods\CallTool;
 use Laravel\Mcp\Server\ServerContext;
 use Laravel\Mcp\Server\Tool;
-use Laravel\Mcp\Server\Transport\JsonRpcRequest;
-use Laravel\Mcp\Server\Transport\JsonRpcResponse;
+use Laravel\Mcp\Transport\JsonRpcRequest;
+use Laravel\Mcp\Transport\JsonRpcResponse;
 use X402\Facilitator\DiscoveryPage;
 use X402\Facilitator\DiscoveryQuery;
 use X402\Facilitator\FacilitatorClient;
@@ -186,8 +187,7 @@ function makeServerContext(array $tools): ServerContext
     return new ServerContext(
         supportedProtocolVersions: ['2025-11-25'],
         serverCapabilities: [],
-        serverName: 'test',
-        serverVersion: '0.0.1',
+        implementation: new Implementation('test', '0.0.1'),
         instructions: '',
         maxPaginationLength: 50,
         defaultPaginationLength: 15,
@@ -445,24 +445,18 @@ it('delegates unknown tool names to the parent CallTool which throws JsonRpcExce
 
 it('pins the parent CallTool invocation contract for AuthorizationException', function (): void {
     // CONTRACT TEST. X402CallTool::runToolWithReceipt mirrors parent
-    // CallTool::handle's Container::call + Auth/Validation catch (see
-    // vendor/laravel/mcp/src/Server/Methods/CallTool.php:53-60). If
+    // CallTool's Container::call + Auth/Validation catch. If
     // upstream ever changes that catch shape — drops a clause, swaps
     // exceptions, moves the dispatch elsewhere — paid tools would
     // silently lose the parity. This test pins the upstream behavior
     // by exercising the parent class directly. When this fails, audit
     // X402CallTool::runToolWithReceipt for the same change.
     //
-    // laravel/mcp < 0.7 only caught ValidationException — the
-    // AuthorizationException catch landed in 0.7. Under prefer-lowest
-    // (0.6.x) the parent rethrows; the parity test below still
-    // verifies *our* catch shape against that older parent.
-    $filename = (new ReflectionMethod(CallTool::class, 'handle'))->getFileName();
-    $body = is_string($filename) ? file_get_contents($filename) : false;
-    if (! is_string($body) || ! str_contains($body, 'AuthorizationException $authException')) {
-        test()->markTestSkipped('parent CallTool::handle predates the AuthorizationException catch (laravel/mcp < 0.7)');
-    }
-
+    // Behavioural, not source-sniffing: laravel/mcp moved the catch from
+    // `CallTool::handle` (<= 0.9) into `ToolInvoker` /
+    // `InteractsWithResponses::callHandler` (>= 1.0). What must stay stable
+    // across the supported range is the *result*: an AuthorizationException
+    // becomes an `isError` tool result carrying the exception message.
     $parent = new CallTool();
 
     $rpcRequest = makeJsonRpcRequest('free-unauthorized-tool');
@@ -634,6 +628,77 @@ it('attaches the receipt to the terminal error frame when the generator throws A
     /** @var array<string, mixed> $result */
     $result = $terminal['result'];
     expect($result['isError'] ?? null)->toBeTrue();
+
+    /** @var array<string, mixed> $meta */
+    $meta = $result['_meta'];
+    expect($meta['x402/payment-response'] ?? null)->toBe(expectedReceipt());
+});
+
+#[X402Price(amount: '0.01', asset: 'USDC', network: 'base')]
+final class PaidSyncThrowsRuntimeTool extends Tool
+{
+    public function description(): string
+    {
+        return 'Paid tool that throws a generic RuntimeException synchronously after settle.';
+    }
+
+    public function handle(Request $request): Response
+    {
+        throw new RuntimeException('sync generic tool failure');
+    }
+}
+
+it('stamps the receipt when a settled tool throws a generic Throwable synchronously', function (): void {
+    // Companion to the mid-stream test: `PaymentGate::invokeForReceipt`
+    // normalises every non-JsonRpcException failure into an error result,
+    // so the README's "settlement receipt always lands on the response"
+    // guarantee holds on the synchronous path too — and identically on
+    // every supported laravel/mcp minor (<= 0.9 only caught
+    // Auth/Authn/Validation around its own dispatch).
+    $rpcRequest = makeJsonRpcRequest('paid-sync-throws-runtime-tool', [
+        '_meta' => ['x402/payment' => buildPaymentMeta('0x000000000000000000000000000000000000beef')],
+    ]);
+
+    $response = makeCallTool()->handle($rpcRequest, makeServerContext([new PaidSyncThrowsRuntimeTool()]));
+
+    expect($response)->not->toBeInstanceOf(Generator::class);
+
+    /** @var array<string, mixed> $result */
+    $result = $response->toArray()['result'];
+    expect($result['isError'] ?? null)->toBeTrue();
+
+    /** @var list<array<string, mixed>> $content */
+    $content = $result['content'] ?? [];
+    expect($content[0]['text'] ?? null)->toBe('sync generic tool failure');
+
+    /** @var array<string, mixed> $meta */
+    $meta = $result['_meta'];
+    expect($meta['x402/payment-response'] ?? null)->toBe(expectedReceipt());
+});
+
+it('hides the exception message of a mid-stream failure when app.debug is off', function (): void {
+    // Same redaction as the synchronous path — the streaming wrapper routes
+    // through `PaymentGate::postSettleErrorResponse` too, so a paid stream
+    // cannot leak internal exception text on its terminal frame.
+    config()->set('app.debug', false);
+
+    $rpcRequest = makeJsonRpcRequest('paid-streaming-throws-runtime-tool', [
+        '_meta' => ['x402/payment' => buildPaymentMeta('0x000000000000000000000000000000000000beef')],
+    ]);
+
+    $frames = streamFrames(
+        makeCallTool()->handle($rpcRequest, makeServerContext([new PaidStreamingThrowsRuntimeTool()])),
+    );
+
+    $terminal = $frames[1]->toArray();
+
+    /** @var array<string, mixed> $result */
+    $result = $terminal['result'];
+    expect($result['isError'] ?? null)->toBeTrue();
+
+    /** @var list<array<string, mixed>> $content */
+    $content = $result['content'] ?? [];
+    expect($content[0]['text'] ?? null)->toBe('An internal server error occurred.');
 
     /** @var array<string, mixed> $meta */
     $meta = $result['_meta'];

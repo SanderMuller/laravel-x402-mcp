@@ -8,8 +8,8 @@ use Illuminate\Support\Collection;
 use Laravel\Mcp\Server\Pagination\CursorPaginator;
 use Laravel\Mcp\Server\Primitive;
 use Laravel\Mcp\Server\ServerContext;
-use Laravel\Mcp\Server\Transport\JsonRpcRequest;
-use Laravel\Mcp\Server\Transport\JsonRpcResponse;
+use Laravel\Mcp\Transport\JsonRpcRequest;
+use Laravel\Mcp\Transport\JsonRpcResponse;
 use X402\Laravel\Mcp\Attributes\X402Price;
 
 /**

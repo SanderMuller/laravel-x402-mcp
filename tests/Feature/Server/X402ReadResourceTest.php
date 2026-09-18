@@ -5,12 +5,13 @@ declare(strict_types=1);
 use Illuminate\Auth\Access\AuthorizationException;
 use Laravel\Mcp\Request as McpRequest;
 use Laravel\Mcp\Response;
+use Laravel\Mcp\Schema\Implementation;
 use Laravel\Mcp\Server\Contracts\HasUriTemplate;
 use Laravel\Mcp\Server\Resource;
 use Laravel\Mcp\Server\ServerContext;
-use Laravel\Mcp\Server\Transport\JsonRpcRequest;
-use Laravel\Mcp\Server\Transport\JsonRpcResponse;
 use Laravel\Mcp\Support\UriTemplate;
+use Laravel\Mcp\Transport\JsonRpcRequest;
+use Laravel\Mcp\Transport\JsonRpcResponse;
 use X402\Facilitator\DiscoveryPage;
 use X402\Facilitator\DiscoveryQuery;
 use X402\Facilitator\FacilitatorClient;
@@ -96,8 +97,7 @@ function makeResourceContext(array $resources): ServerContext
     return new ServerContext(
         supportedProtocolVersions: ['2025-11-25'],
         serverCapabilities: [],
-        serverName: 'test',
-        serverVersion: '0.0.1',
+        implementation: new Implementation('test', '0.0.1'),
         instructions: '',
         maxPaginationLength: 50,
         defaultPaginationLength: 15,
@@ -310,7 +310,7 @@ final class PaidStreamingThrowsRuntimeResource extends Resource
 
     public function description(): string
     {
-        return 'Paid streaming resource that yields one notification then throws RuntimeException — pins the asymmetry vs X402CallTool.';
+        return 'Paid streaming resource that yields one notification then throws RuntimeException — the wrapper stamps the receipt on the terminal frame.';
     }
 
     /**
@@ -324,14 +324,14 @@ final class PaidStreamingThrowsRuntimeResource extends Resource
     }
 }
 
-it('does NOT wrap mid-stream Throwables (asymmetry vs X402CallTool) — generic exceptions propagate past the receipt', function (): void {
-    // Pinned by Codex review (§2.6): X402CallTool wraps via
-    // wrapStreamingForReceipt and stamps the receipt on a terminal error
-    // frame for any Throwable. X402ReadResource intentionally does NOT
-    // wrap — vendor toJsonRpcStreamedResponse only catches Auth/Authn/
-    // Validation, so generic Throwables propagate. This test pins the
-    // intentional regression surface so a future "consistency pass"
-    // doesn't silently extend the wrapper to all three handlers.
+it('stamps the receipt on the terminal frame when the resource throws a generic Throwable mid-stream', function (): void {
+    // All three gated handlers wrap the primitive's iterable via
+    // `PaymentGate::wrapStreamingForReceipt`, so a settled payment always
+    // emits settlement proof — the README "post-settle failure" guarantee.
+    // The wrapper also makes this version-independent: laravel/mcp <= 0.9
+    // only catches Auth/Authn/Validation inside `toJsonRpcStreamedResponse`,
+    // while >= 1.0 catches every Throwable and rewrites the message to
+    // 'An internal server error occurred.' outside debug mode.
     $rpcRequest = makeReadResourceRequest('mcp://test/paid-streaming-throws-runtime-resource', [
         '_meta' => ['x402/payment' => buildPaymentMeta('0x000000000000000000000000000000000000beef')],
     ]);
@@ -343,16 +343,19 @@ it('does NOT wrap mid-stream Throwables (asymmetry vs X402CallTool) — generic 
 
     expect($generator)->toBeInstanceOf(Generator::class);
 
-    $threw = false;
-    try {
-        /** @var Generator<int, mixed> $generator */
-        iterator_to_array($generator, preserve_keys: false);
-    } catch (RuntimeException $runtimeException) {
-        $threw = true;
-        expect($runtimeException->getMessage())->toBe('mid-stream generic resource failure');
-    }
+    /** @var Generator<int, JsonRpcResponse> $generator */
+    $frames = iterator_to_array($generator, preserve_keys: false);
 
-    expect($threw)->toBeTrue('Expected the generic mid-stream Throwable to propagate past the receipt.');
+    expect($frames)->toHaveCount(2);
+
+    $terminal = $frames[1]->toArray();
+
+    /** @var array<string, mixed> $result */
+    $result = $terminal['result'];
+
+    /** @var array<string, mixed> $meta */
+    $meta = $result['_meta'];
+    expect($meta['x402/payment-response'] ?? null)->toBe(expectedReceipt());
 });
 
 #[X402Price(amount: '0.01', asset: 'USDC', network: 'base')]
@@ -409,6 +412,132 @@ it('stamps the receipt on the terminal error frame for vendor-caught mid-stream 
 
     /** @var array<string, mixed> $result */
     $result = $terminal['result'];
+
+    /** @var array<string, mixed> $meta */
+    $meta = $result['_meta'];
+    expect($meta['x402/payment-response'] ?? null)->toBe(expectedReceipt());
+});
+
+#[X402Price(amount: '0.01', asset: 'USDC', network: 'base')]
+final class PaidSyncThrowsRuntimeResource extends Resource
+{
+    protected string $uri = 'mcp://test/paid-sync-throws-runtime-resource';
+
+    public function description(): string
+    {
+        return 'Paid resource that throws a generic RuntimeException synchronously after settle.';
+    }
+
+    public function handle(): Response
+    {
+        throw new RuntimeException('sync generic resource failure');
+    }
+}
+
+it('stamps the receipt when a settled resource throws a generic Throwable synchronously', function (): void {
+    // `PaymentGate::invokeForReceipt` normalises every non-JsonRpcException
+    // failure into an error result, so settlement proof survives a
+    // post-settle handler failure on the synchronous path as well.
+    $rpcRequest = makeReadResourceRequest('mcp://test/paid-sync-throws-runtime-resource', [
+        '_meta' => ['x402/payment' => buildPaymentMeta('0x000000000000000000000000000000000000beef')],
+    ]);
+
+    $response = makeReadResource()->handle(
+        $rpcRequest,
+        makeResourceContext([new PaidSyncThrowsRuntimeResource()]),
+    );
+
+    expect($response)->not->toBeInstanceOf(Generator::class);
+
+    /** @var array<string, mixed> $result */
+    $result = $response->toArray()['result'];
+
+    /** @var array<string, mixed> $meta */
+    $meta = $result['_meta'];
+    expect($meta['x402/payment-response'] ?? null)->toBe(expectedReceipt());
+});
+
+#[X402Price(amount: '0.01', asset: 'USDC', network: 'base')]
+final class PaidCountingThrowsResource extends Resource
+{
+    public static int $calls = 0;
+
+    protected string $uri = 'mcp://test/paid-counting-throws-resource';
+
+    public function description(): string
+    {
+        return 'Paid resource that counts invocations and always throws.';
+    }
+
+    public function handle(): Response
+    {
+        ++self::$calls;
+
+        throw new RuntimeException('counting resource failure');
+    }
+}
+
+it('does not cache a post-settle failure — the result is never replayed as a success', function (): void {
+    // `ReadResource::serializable` emits `{contents: [...]}` with no
+    // `isError` key, so the cache-store guard cannot tell a failed paid read
+    // from a successful one by payload shape alone. `PaymentGate` tracks the
+    // failure explicitly; without that, the settled-but-failed read would be
+    // frozen into the idempotency cache and handed to every later retry of
+    // that authorization as though it had succeeded.
+    //
+    // With the failure uncached, the retry falls through to the replay guard
+    // and gets a fresh 402 — the same shape a failed paid `tools/call`
+    // retry already produced.
+    PaidCountingThrowsResource::$calls = 0;
+
+    $payment = buildPaymentMeta('0x000000000000000000000000000000000000beef');
+    $handler = makeReadResource();
+
+    $first = $handler->handle(
+        makeReadResourceRequest('mcp://test/paid-counting-throws-resource', ['_meta' => ['x402/payment' => $payment]]),
+        makeResourceContext([new PaidCountingThrowsResource()]),
+    );
+    $second = $handler->handle(
+        makeReadResourceRequest('mcp://test/paid-counting-throws-resource', ['_meta' => ['x402/payment' => $payment]]),
+        makeResourceContext([new PaidCountingThrowsResource()]),
+    );
+
+    expect(PaidCountingThrowsResource::$calls)->toBe(1);
+
+    /** @var array<string, mixed> $firstResult */
+    $firstResult = $first->toArray()['result'];
+
+    /** @var array<string, mixed> $secondResult */
+    $secondResult = $second->toArray()['result'];
+
+    // Not a replay of the stored failure: the retry is a fresh challenge.
+    expect($secondResult)->not->toBe($firstResult)
+        ->and($secondResult['isError'] ?? null)->toBeTrue()
+        ->and($secondResult['structuredContent']['x402Version'] ?? null)->toBe(2);
+});
+
+it('hides the exception message of a post-settle failure when app.debug is off', function (): void {
+    // laravel/mcp 1.0 reports-and-redacts non-auth exceptions outside debug
+    // mode. The unified catch must do the same, or a paid call would turn
+    // internal exception text into wire output.
+    config()->set('app.debug', false);
+
+    $rpcRequest = makeReadResourceRequest('mcp://test/paid-sync-throws-runtime-resource', [
+        '_meta' => ['x402/payment' => buildPaymentMeta('0x000000000000000000000000000000000000beef')],
+    ]);
+
+    $response = makeReadResource()->handle(
+        $rpcRequest,
+        makeResourceContext([new PaidSyncThrowsRuntimeResource()]),
+    );
+
+    $encoded = $response->toJson();
+
+    expect($encoded)->not->toContain('sync generic resource failure')
+        ->and($encoded)->toContain('An internal server error occurred.');
+
+    /** @var array<string, mixed> $result */
+    $result = $response->toArray()['result'];
 
     /** @var array<string, mixed> $meta */
     $meta = $result['_meta'];

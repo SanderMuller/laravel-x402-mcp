@@ -6,12 +6,21 @@ namespace X402\Laravel\Mcp\Server\Concerns;
 
 use Closure;
 use Generator;
+use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Auth\AuthenticationException;
+use Illuminate\Container\Container;
+use Illuminate\Contracts\Config\Repository as ConfigRepository;
+use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Support\Facades\Date;
+use Illuminate\Validation\ValidationException;
+use Laravel\Mcp\Exceptions\JsonRpcException;
 use Laravel\Mcp\Response;
 use Laravel\Mcp\ResponseFactory;
 use Laravel\Mcp\Server\Primitive;
-use Laravel\Mcp\Server\Transport\JsonRpcRequest;
-use Laravel\Mcp\Server\Transport\JsonRpcResponse;
+use Laravel\Mcp\Support\ValidationMessages;
+use Laravel\Mcp\Transport\JsonRpcRequest;
+use Laravel\Mcp\Transport\JsonRpcResponse;
+use Throwable;
 use X402\Errors\ErrorReason;
 use X402\Exceptions\InvalidPaymentException;
 use X402\Facilitator\SettleResult;
@@ -52,6 +61,15 @@ trait PaymentGate
     private const META_RESPONSE_KEY = 'x402/payment-response';
 
     /**
+     * Set when the settled primitive's handler threw. The result still
+     * carries the receipt, but it must never enter the idempotency cache:
+     * `ReadResource` / `GetPrompt` serializers emit `{contents}` /
+     * `{description, messages}` with no `isError` key, so the payload alone
+     * cannot be distinguished from a successful one.
+     */
+    private bool $settledHandlerFailed = false;
+
+    /**
      * Template method shared by all three handlers. Owns the post-resolve
      * 7-step gate: shape-verify → cache lookup → guardReplay → verify →
      * settle → run → conditional cache store.
@@ -60,10 +78,12 @@ trait PaymentGate
      *   1. **Cache lookup precedes `guardReplay`.** A legitimate retry of a
      *      previously settled call must hit the cache before the nonce
      *      store rejects the duplicate authorization.
-     *   2. **Cache store skips `Generator` and `isError: true` results.**
-     *      Streamed responses have no atomic snapshot; tool errors on a
-     *      settled payment may carry transient state and deserve a fresh
-     *      handler call on retry.
+     *   2. **Cache store skips `Generator` results, `isError: true`
+     *      results, and any call whose handler threw.** Streamed responses
+     *      have no atomic snapshot; errors on a settled payment may carry
+     *      transient state and deserve a fresh handler call on retry. The
+     *      thrown-handler case needs its own flag because the resource and
+     *      prompt serializers emit no `isError` key.
      *   3. **Snapshot shape is `['result' => $resultPayload]` exactly.**
      *      `PaidToolResponseCache::isValidSnapshot` rejects anything else.
      *
@@ -93,6 +113,11 @@ trait PaymentGate
         if (! $price instanceof X402Price) {
             return $priceAbsentPassthrough();
         }
+
+        // Reset per invocation: handlers are resolved fresh per JSON-RPC
+        // message in production, but a reused instance must not carry a
+        // previous call's failure into this one's cache decision.
+        $this->settledHandlerFailed = false;
 
         $challenge = $buildChallenge($price, $target);
         $paymentMeta = $this->readPaymentMeta($request);
@@ -158,7 +183,7 @@ trait PaymentGate
             $body = $response->toArray();
             $resultPayload = $body['result'] ?? null;
 
-            if (is_array($resultPayload) && ($resultPayload['isError'] ?? false) !== true) {
+            if (is_array($resultPayload) && ($resultPayload['isError'] ?? false) !== true && ! $this->settledHandlerFailed) {
                 $this->responseCache->store($scope, $signature, ['result' => $resultPayload]);
             }
         }
@@ -310,6 +335,105 @@ trait PaymentGate
             /** @var array<string, mixed> */
             return $base($factory);
         };
+    }
+
+    /**
+     * Shape a post-settle handler failure into an error `Response`.
+     *
+     * Mirrors `laravel/mcp` 1.0's `InteractsWithResponses::toErrorResponse`:
+     * validation and auth failures are the caller's own fault and carry
+     * their message, anything else is reported and replaced with a generic
+     * string unless `app.debug` is on. Without that last step the unified
+     * catch would turn every internal exception message (DSNs, driver
+     * errors, file paths) into wire output on a paid call — the older
+     * laravel/mcp minors never surfaced those.
+     */
+    private function postSettleErrorResponse(Throwable $throwable): Response
+    {
+        if ($throwable instanceof ValidationException) {
+            return Response::error(ValidationMessages::from($throwable));
+        }
+
+        if ($throwable instanceof AuthenticationException || $throwable instanceof AuthorizationException) {
+            return Response::error($throwable->getMessage());
+        }
+
+        $container = Container::getInstance();
+
+        /** @var ConfigRepository $config */
+        $config = $container->make(ConfigRepository::class);
+
+        if ($config->get('app.debug', false) === true) {
+            return Response::error($throwable->getMessage());
+        }
+
+        try {
+            /** @var ExceptionHandler $handler */
+            $handler = $container->make(ExceptionHandler::class);
+            $handler->report($throwable);
+        } catch (Throwable) {
+            // Reporting is best-effort. A misconfigured or missing handler
+            // must not swallow the receipt this method exists to preserve.
+        }
+
+        return Response::error('An internal server error occurred.');
+    }
+
+    /**
+     * Invoke a settled primitive's handler and normalise every failure into
+     * a `Response::error` so the caller can still stamp the receipt on it.
+     *
+     * Mirrors `wrapStreamingForReceipt` for the synchronous path: a paid
+     * call that has already settled on-chain must emit settlement proof
+     * even when the handler throws. `JsonRpcException` is the explicit
+     * non-catch — it is a handler-authored protocol error that must
+     * surface as a JSON-RPC error envelope, not a result envelope.
+     *
+     * Version note: laravel/mcp <= 0.9 catches Auth/Authn/Validation
+     * around its own handler dispatch, >= 1.0 catches every Throwable
+     * (and rewrites the message outside debug mode). Catching here keeps
+     * the paid path identical on every supported minor.
+     *
+     * @param  Closure(): mixed  $invoke
+     */
+    private function invokeForReceipt(Closure $invoke): mixed
+    {
+        try {
+            return $invoke();
+        } catch (JsonRpcException $jsonRpcException) {
+            throw $jsonRpcException;
+        } catch (Throwable $throwable) {
+            $this->settledHandlerFailed = true;
+
+            return $this->postSettleErrorResponse($throwable);
+        }
+    }
+
+    /**
+     * Wrap the primitive's iterable so any Throwable thrown mid-stream becomes a
+     * terminal Response::error frame instead of propagating past the
+     * streaming method. Lets the receipt always land on a settled payment.
+     *
+     * JsonRpcException is the explicit non-catch — it represents a
+     * tool-authored protocol error that must surface as a JSON-RPC error
+     * envelope, not a tool-result envelope.
+     *
+     * @param  iterable<Response|ResponseFactory|string>  $responses
+     * @return Generator<int, Response|ResponseFactory|string>
+     */
+    private function wrapStreamingForReceipt(iterable $responses): Generator
+    {
+        try {
+            foreach ($responses as $response) {
+                yield $response;
+            }
+        } catch (JsonRpcException $jsonRpcException) {
+            throw $jsonRpcException;
+        } catch (Throwable $throwable) {
+            $this->settledHandlerFailed = true;
+
+            yield $this->postSettleErrorResponse($throwable);
+        }
     }
 
     /**

@@ -35,11 +35,32 @@ jobs:
         php: ['8.3', '8.4']
         laravel: ['12.*']
         stability: [prefer-lowest, prefer-stable]
+        # Newest supported laravel/mcp on the full PHP x stability grid; the
+        # older supported minors get one cell each below (see `include`).
+        mcp: ['^1.0']
         include:
           - laravel: '12.*'
             testbench: '10.*'
+          # One cell per older supported laravel/mcp minor. 0.7.1 is the
+          # floor: 0.7.0 still had the pre-relocation
+          # `Laravel\Mcp\Server\Transport\*` namespace.
+          - php: '8.4'
+            laravel: '12.*'
+            testbench: '10.*'
+            stability: prefer-stable
+            mcp: '^0.7.1'
+          - php: '8.4'
+            laravel: '12.*'
+            testbench: '10.*'
+            stability: prefer-stable
+            mcp: '^0.8'
+          - php: '8.4'
+            laravel: '12.*'
+            testbench: '10.*'
+            stability: prefer-stable
+            mcp: '^0.9'
 
-    name: P${{ matrix.php }} - L${{ matrix.laravel }} - ${{ matrix.stability }}
+    name: P${{ matrix.php }} - L${{ matrix.laravel }} - MCP ${{ matrix.mcp }} - ${{ matrix.stability }}
 
     steps:
       - uses: actions/checkout@v6
@@ -58,7 +79,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          composer require "laravel/framework:${{ matrix.laravel }}" "orchestra/testbench:${{ matrix.testbench }}" --no-interaction --no-update
+          composer require "laravel/framework:${{ matrix.laravel }}" "orchestra/testbench:${{ matrix.testbench }}" "laravel/mcp:${{ matrix.mcp }}" --no-interaction --no-update
           composer update --${{ matrix.stability }} --prefer-dist --no-interaction
 
       - name: List installed dependencies
@@ -68,8 +89,8 @@ jobs:
         uses: actions/cache@v5
         with:
           path: .phpunit.cache/
-          key: phpunit-cache-${{ matrix.php }}-${{ matrix.laravel }}-${{ matrix.stability }}-${{ hashFiles('tests/**') }}
-          restore-keys: phpunit-cache-${{ matrix.php }}-${{ matrix.laravel }}-${{ matrix.stability }}-
+          key: phpunit-cache-${{ matrix.php }}-${{ matrix.laravel }}-${{ matrix.mcp }}-${{ matrix.stability }}-${{ hashFiles('tests/**') }}
+          restore-keys: phpunit-cache-${{ matrix.php }}-${{ matrix.laravel }}-${{ matrix.mcp }}-${{ matrix.stability }}-
 
       - name: Execute tests
         run: vendor/bin/pest --ci

@@ -7,7 +7,7 @@
 
 Gate [`laravel/mcp`](https://github.com/laravel/mcp) tools behind x402 stablecoin payments. Conformant with the x402 v2 MCP transport spec (`specs/transports-v2/mcp.md`).
 
-Bridge between [`sandermuller/laravel-x402`](https://github.com/sandermuller/laravel-x402) (^0.5) and `laravel/mcp` (^0.6 || ^0.7). Annotate paid tools with the `#[X402Price]` attribute. Agents include the signed payment payload in `params._meta["x402/payment"]` (JSON-RPC level — not an HTTP header). The advertised price travels back on `tools/list` / `resources/list` / `prompts/list` via `_meta["x402/price"]`.
+Bridge between [`sandermuller/laravel-x402`](https://github.com/sandermuller/laravel-x402) (^0.5) and `laravel/mcp` (^0.7.1 through ^1.0). Annotate paid tools with the `#[X402Price]` attribute. Agents include the signed payment payload in `params._meta["x402/payment"]` (JSON-RPC level — not an HTTP header). The advertised price travels back on `tools/list` / `resources/list` / `prompts/list` via `_meta["x402/price"]`.
 
 ## Install
 
@@ -120,9 +120,10 @@ The replay store from `laravel-x402` is reused — concurrent requests with the 
 
 ### Post-settle tool failure
 
-Settlement happens *before* the tool runs. If the tool throws after the facilitator has settled, the payment has already moved on-chain and is not refundable from this layer. **The settlement receipt always lands on the response** — every `Throwable` thrown by the tool (synchronous or mid-stream in a generator) is caught, returned as a tool error result, and stamped with `result._meta["x402/payment-response"]` so agents can prove the payment settled even when delivery failed. Two exceptions to that guarantee:
+Settlement happens *before* the tool runs. If the tool throws after the facilitator has settled, the payment has already moved on-chain and is not refundable from this layer. **The settlement receipt always lands on the response** — every `Throwable` thrown by the gated tool, resource or prompt (synchronous or mid-stream in a generator) is caught, returned as an error result, and stamped with `result._meta["x402/payment-response"]` so agents can prove the payment settled even when delivery failed. Validation and authorization failures carry their own message; any other exception is reported through the application's exception handler and replaced with a generic string unless `app.debug` is on. A post-settle failure is never written to the idempotent-response cache, so a retry is never served a stored failure as though it had succeeded. Two exceptions to that guarantee:
 
 - `JsonRpcException` — a tool that throws this is signalling an explicit transport-level protocol error; it surfaces as a JSON-RPC error envelope, not a tool result, and carries no receipt.
+- On `laravel/mcp` 1.0+, `#[Cacheable]` on a server (or a resource's `cacheable()`) emits client-facing cache hints. Do not mark a priced resource or a server that hosts one as `CacheScope::Public` — a paid result advertised as publicly cacheable can be replayed by intermediaries without payment.
 - The agent disconnects mid-stream — the receipt was generated but never reached the wire. The on-chain settlement stands; a future idempotency cache will let retries replay the cached response.
 
 This ordering is by design: the x402 settle is the canonical proof of payment, and the spec requires it to be observable independently of tool execution. If your tool needs transactional "execute-or-refund" semantics, do the work in two steps — settle the user into a credit balance first, debit on successful execution — rather than relying on this layer.

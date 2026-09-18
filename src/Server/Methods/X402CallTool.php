@@ -5,20 +5,15 @@ declare(strict_types=1);
 namespace X402\Laravel\Mcp\Server\Methods;
 
 use Generator;
-use Illuminate\Auth\Access\AuthorizationException;
-use Illuminate\Auth\AuthenticationException;
 use Illuminate\Container\Container;
-use Illuminate\Validation\ValidationException;
 use Laravel\Mcp\Response;
 use Laravel\Mcp\ResponseFactory;
-use Laravel\Mcp\Server\Exceptions\JsonRpcException;
 use Laravel\Mcp\Server\Methods\CallTool;
+use Laravel\Mcp\Server\Methods\Concerns\InteractsWithResponses;
 use Laravel\Mcp\Server\ServerContext;
 use Laravel\Mcp\Server\Tool;
-use Laravel\Mcp\Server\Transport\JsonRpcRequest;
-use Laravel\Mcp\Server\Transport\JsonRpcResponse;
-use Laravel\Mcp\Support\ValidationMessages;
-use Throwable;
+use Laravel\Mcp\Transport\JsonRpcRequest;
+use Laravel\Mcp\Transport\JsonRpcResponse;
 use X402\Facilitator\FacilitatorClient;
 use X402\Facilitator\SettleResult;
 use X402\Laravel\Mcp\Attributes\X402Price;
@@ -61,15 +56,24 @@ use X402\Replay\NonceStoreContract;
  * fails after the claim, the nonce is burned and the user must
  * regenerate.
  *
- * **Streaming receipt asymmetry:** unlike `X402ReadResource` and
- * `X402GetPrompt`, this handler wraps the tool's iterable via
- * `wrapStreamingForReceipt` so settled payments still emit a receipt
- * even when the tool throws mid-stream. The other two handlers rely on
- * vendor `toJsonRpcStreamedResponse`, which only catches
- * Auth/Authn/Validation. Asymmetry is intentional and pinned by tests.
+ * **Receipt guarantee:** like `X402ReadResource` and `X402GetPrompt`,
+ * this handler routes the tool through `PaymentGate::invokeForReceipt`
+ * (synchronous path) and `PaymentGate::wrapStreamingForReceipt`
+ * (iterables), so a settled payment always emits its receipt — even when
+ * the tool throws. Only `JsonRpcException` escapes, as a transport-level
+ * protocol error. Owning the catch here also makes the behaviour
+ * independent of vendor drift: `laravel/mcp` <= 0.9 caught
+ * Auth/Authn/Validation around its own dispatch, >= 1.0 catches every
+ * Throwable and rewrites the message outside debug mode.
+ *
+ * **Version note:** `CallTool` dropped `InteractsWithResponses` and
+ * `serializable()` in 1.0 (both moved to `Server\ToolInvoker`), so this
+ * class composes the trait and declares the serializer itself. That is
+ * valid on every supported minor.
  */
 final class X402CallTool extends CallTool
 {
+    use InteractsWithResponses;
     use PaymentGate;
 
     public function __construct(
@@ -102,6 +106,24 @@ final class X402CallTool extends CallTool
     }
 
     /**
+     * Mirrors the tool-result serializer that laravel/mcp keeps in
+     * `CallTool` (<= 0.9) and in `Server\ToolInvoker` (>= 1.0). Declaring
+     * it here keeps one handler valid across both layouts — the parent no
+     * longer exposes it on 1.0.
+     *
+     * @return callable(ResponseFactory): array<string, mixed>
+     */
+    protected function serializable(Tool $tool): callable
+    {
+        return fn (ResponseFactory $factory): array => $factory->mergeStructuredContent(
+            $factory->mergeMeta([
+                'content' => $factory->responses()->map(fn (Response $response): array => $response->content()->toTool($tool))->all(),
+                'isError' => $factory->responses()->contains(fn (Response $response): bool => $response->isError()),
+            ])
+        );
+    }
+
+    /**
      * @return array<int|string, mixed>
      */
     private function arguments(JsonRpcRequest $request): array
@@ -122,16 +144,10 @@ final class X402CallTool extends CallTool
     private function runToolWithReceipt(JsonRpcRequest $request, Tool $tool, SettleResult $settle): Generator|JsonRpcResponse
     {
         // Replicates the parent's runtime call so we can wrap the response
-        // before serialisation. Auth/validation exceptions are caught here
-        // so settled-but-rejected payments don't leak the tool result —
-        // same shape as the parent's catch block.
-        try {
-            $response = Container::getInstance()->call([$tool, 'handle']);
-        } catch (AuthorizationException|AuthenticationException $authException) {
-            $response = Response::error($authException->getMessage());
-        } catch (ValidationException $validationException) {
-            $response = Response::error(ValidationMessages::from($validationException));
-        }
+        // before serialisation. `invokeForReceipt` turns every failure
+        // (except JsonRpcException) into an error result, so a settled
+        // payment always carries its receipt.
+        $response = $this->invokeForReceipt(fn (): mixed => Container::getInstance()->call([$tool, 'handle']));
 
         $receipt = $this->buildReceipt($settle);
 
@@ -173,33 +189,6 @@ final class X402CallTool extends CallTool
         $factory->withMeta(self::META_RESPONSE_KEY, $receipt);
 
         return $this->toJsonRpcResponse($request, $factory, $this->serializable($tool));
-    }
-
-    /**
-     * Wrap the tool's iterable so any Throwable thrown mid-stream becomes a
-     * terminal Response::error frame instead of propagating past the
-     * streaming method. Lets the receipt always land on a settled payment.
-     *
-     * JsonRpcException is the explicit non-catch — it represents a
-     * tool-authored protocol error that must surface as a JSON-RPC error
-     * envelope, not a tool-result envelope.
-     *
-     * @param  iterable<Response|ResponseFactory|string>  $responses
-     * @return Generator<int, Response|ResponseFactory|string>
-     */
-    private function wrapStreamingForReceipt(iterable $responses): Generator
-    {
-        try {
-            foreach ($responses as $response) {
-                yield $response;
-            }
-        } catch (JsonRpcException $jsonRpcException) {
-            throw $jsonRpcException;
-        } catch (ValidationException $validationException) {
-            yield Response::error(ValidationMessages::from($validationException));
-        } catch (Throwable $throwable) {
-            yield Response::error($throwable->getMessage());
-        }
     }
 
     private function resolveTool(JsonRpcRequest $request, ServerContext $context): ?Tool

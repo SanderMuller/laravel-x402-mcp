@@ -2,8 +2,9 @@
 
 declare(strict_types=1);
 
+use Laravel\Mcp\Schema\Implementation;
 use Laravel\Mcp\Server\ServerContext;
-use Laravel\Mcp\Server\Transport\JsonRpcRequest;
+use Laravel\Mcp\Transport\JsonRpcRequest;
 use X402\Laravel\Mcp\Server\Cache\PaidToolResponseCache;
 use X402\Laravel\Mcp\Server\ChallengeFactory;
 use X402\Laravel\Mcp\Server\Methods\X402CallTool;
@@ -38,8 +39,7 @@ it('emits identical 402 envelope shape across X402CallTool, X402ReadResource, an
     $context = new ServerContext(
         supportedProtocolVersions: ['2025-11-25'],
         serverCapabilities: [],
-        serverName: 'test',
-        serverVersion: '0.0.1',
+        implementation: new Implementation('test', '0.0.1'),
         instructions: '',
         maxPaginationLength: 50,
         defaultPaginationLength: 15,
@@ -112,8 +112,9 @@ it('emits identical 402 envelope shape across X402CallTool, X402ReadResource, an
     foreach ([$toolResult, $resourceResult, $promptResult] as $result) {
         /** @var list<array<string, mixed>> $content */
         $content = $result['content'];
-        expect($content)->toHaveCount(1);
-        expect($content[0]['type'] ?? null)->toBe('text');
+        expect($content)->toHaveCount(1)
+            ->and($content[0]['type'] ?? null)
+            ->toBe('text');
 
         /** @var string $text */
         $text = $content[0]['text'];
