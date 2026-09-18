@@ -258,6 +258,8 @@ final class PaidStreamingThrowsRuntimePrompt extends Prompt
 }
 
 it('stamps the receipt on the terminal frame when the prompt throws a generic Throwable mid-stream', function (): void {
+    config()->set('app.debug', true);
+
     // All three gated handlers wrap the primitive's iterable via
     // `PaymentGate::wrapStreamingForReceipt`, so a settled payment always
     // emits settlement proof — the README "post-settle failure" guarantee.
@@ -364,6 +366,8 @@ final class PaidSyncThrowsRuntimePrompt extends Prompt
 }
 
 it('stamps the receipt when a settled prompt throws a generic Throwable synchronously', function (): void {
+    config()->set('app.debug', true);
+
     // `PaymentGate::invokeForReceipt` normalises every non-JsonRpcException
     // failure into an error result, so settlement proof survives a
     // post-settle handler failure on the synchronous path as well.

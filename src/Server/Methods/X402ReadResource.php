@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace X402\Laravel\Mcp\Server\Methods;
 
 use Generator;
-use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 use Laravel\Mcp\Exceptions\JsonRpcException;
 use Laravel\Mcp\Response;

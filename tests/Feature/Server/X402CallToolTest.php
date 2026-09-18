@@ -571,6 +571,11 @@ it('stamps the receipt on the terminal frame even when the generator throws a ge
     // following Codex review: for a paid system, observability of
     // payment-proof outweighs parity with the parent CallTool's narrower
     // catch shape.
+    // Debug is set explicitly: the exception message only reaches the wire
+    // in debug mode, and the ambient value differs between a local run and
+    // CI (`APP_DEBUG=false`).
+    config()->set('app.debug', true);
+
     $rpcRequest = makeJsonRpcRequest('paid-streaming-throws-runtime-tool', [
         '_meta' => ['x402/payment' => buildPaymentMeta('0x000000000000000000000000000000000000beef')],
     ]);
@@ -655,6 +660,8 @@ it('stamps the receipt when a settled tool throws a generic Throwable synchronou
     // guarantee holds on the synchronous path too — and identically on
     // every supported laravel/mcp minor (<= 0.9 only caught
     // Auth/Authn/Validation around its own dispatch).
+    config()->set('app.debug', true);
+
     $rpcRequest = makeJsonRpcRequest('paid-sync-throws-runtime-tool', [
         '_meta' => ['x402/payment' => buildPaymentMeta('0x000000000000000000000000000000000000beef')],
     ]);

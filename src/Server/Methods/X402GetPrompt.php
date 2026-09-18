@@ -6,7 +6,6 @@ namespace X402\Laravel\Mcp\Server\Methods;
 
 use Generator;
 use Illuminate\Container\Container;
-use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 use Laravel\Mcp\Exceptions\JsonRpcException;
 use Laravel\Mcp\Response;
