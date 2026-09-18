@@ -118,13 +118,14 @@ Differences from tool gating:
 
 The replay store from `laravel-x402` is reused — concurrent requests with the same authorization are rejected before hitting the facilitator.
 
-### Post-settle tool failure
+### Post-settle handler failure
 
-Settlement happens *before* the tool runs. If the tool throws after the facilitator has settled, the payment has already moved on-chain and is not refundable from this layer. **The settlement receipt always lands on the response** — every `Throwable` thrown by the gated tool, resource or prompt (synchronous or mid-stream in a generator) is caught, returned as an error result, and stamped with `result._meta["x402/payment-response"]` so agents can prove the payment settled even when delivery failed. Validation and authorization failures carry their own message; any other exception is reported through the application's exception handler and replaced with a generic string unless `app.debug` is on. A post-settle failure is never written to the idempotent-response cache, so a retry is never served a stored failure as though it had succeeded. Two exceptions to that guarantee:
+Settlement happens *before* the tool, resource or prompt runs. If the handler throws after the facilitator has settled, the payment has already moved on-chain and is not refundable from this layer. **The settlement receipt always lands on the response** — every `Throwable` thrown by the gated tool, resource or prompt (synchronous or mid-stream in a generator) is caught, returned as an error result, and stamped with `result._meta["x402/payment-response"]` so agents can prove the payment settled even when delivery failed. Validation and authorization failures carry their own message; any other exception is reported through the application's exception handler and replaced with a generic string unless `app.debug` is on. A post-settle failure is never written to the idempotent-response cache, so a retry is never served a stored failure as though it had succeeded. Two exceptions to the receipt guarantee:
 
-- `JsonRpcException` — a tool that throws this is signalling an explicit transport-level protocol error; it surfaces as a JSON-RPC error envelope, not a tool result, and carries no receipt.
-- On `laravel/mcp` 1.0+, `#[Cacheable]` on a server (or a resource's `cacheable()`) emits client-facing cache hints. Do not mark a priced resource or a server that hosts one as `CacheScope::Public` — a paid result advertised as publicly cacheable can be replayed by intermediaries without payment.
-- The agent disconnects mid-stream — the receipt was generated but never reached the wire. The on-chain settlement stands; a future idempotency cache will let retries replay the cached response.
+- `JsonRpcException` — a handler that throws this is signalling an explicit transport-level protocol error; it surfaces as a JSON-RPC error envelope, not a result envelope, and carries no receipt.
+- The agent disconnects mid-stream — the receipt was generated but never reached the wire. The on-chain settlement stands, and since the failed call was not cached, the retry re-prompts for payment rather than replaying a stored result.
+
+On `laravel/mcp` 1.0+, `#[Cacheable]` on a server (or a resource's `cacheable()`) emits client-facing cache hints. Do not mark a priced resource — or a server that hosts one — as `CacheScope::Public`: a paid result advertised as publicly cacheable can be replayed by intermediaries without payment.
 
 This ordering is by design: the x402 settle is the canonical proof of payment, and the spec requires it to be observable independently of tool execution. If your tool needs transactional "execute-or-refund" semantics, do the work in two steps — settle the user into a credit balance first, debit on successful execution — rather than relying on this layer.
 
@@ -162,7 +163,7 @@ What's NOT cached:
 
 - **402 challenges** — every retry must reprompt for payment.
 - **Streaming responses** (`Generator` returns) — there's no atomic snapshot to replay.
-- **Tool / resource / prompt errors** (`isError: true`) — a primitive that errored on a settled payment may have transient state; retries deserve a fresh handler call.
+- **Tool / resource / prompt errors** — both an explicit `isError: true` payload and any call whose handler threw after settlement. Such a primitive may have transient state, so retries deserve a fresh handler call. The thrown-handler case is tracked separately because the `resources/read` and `prompts/get` serializers emit no `isError` key.
 - **Sub-second concurrent retries** — the lookup-then-claim ordering does not eliminate retry storms. Two retries within milliseconds can both miss the lookup; one wins `guardReplay`, the other gets `replay_attempt`. Real MCP transports rarely fire sub-second retries (HTTP/2 retry policies and stdio reuse a single in-flight call), so the gap is mostly theoretical. Revisit with a pending-reservation pattern if a production deployment surfaces a real complaint.
 
 Configuration. The cache-store name and TTL are shared with `laravel-x402`'s HTTP middleware (one knob across both transports); the cache prefix is MCP-namespaced so HTTP and JSON-RPC consumers can co-exist on a shared Redis without colliding.
