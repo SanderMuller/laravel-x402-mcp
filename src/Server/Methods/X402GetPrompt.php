@@ -5,8 +5,6 @@ declare(strict_types=1);
 namespace X402\Laravel\Mcp\Server\Methods;
 
 use Generator;
-use Illuminate\Auth\Access\AuthorizationException;
-use Illuminate\Auth\AuthenticationException;
 use Illuminate\Container\Container;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
@@ -17,7 +15,6 @@ use Laravel\Mcp\Server\Contracts\Errable;
 use Laravel\Mcp\Server\Methods\GetPrompt;
 use Laravel\Mcp\Server\Prompt;
 use Laravel\Mcp\Server\ServerContext;
-use Laravel\Mcp\Support\ValidationMessages;
 use Laravel\Mcp\Transport\JsonRpcRequest;
 use Laravel\Mcp\Transport\JsonRpcResponse;
 use X402\Facilitator\FacilitatorClient;
@@ -60,11 +57,13 @@ use X402\Replay\NonceStoreContract;
  * the prompt name (prompts are name-addressed, not URI-addressed
  * like resources).
  *
- * **Catch-set deviation from vendor parent:** vendor `GetPrompt`
- * catches `ValidationException` only. This handler also catches
- * `Authorization`/`Authentication` so settled-but-rejected prompts
- * don't leak a partial result. Intentional widening, not a parent
- * mirror.
+ * **Catch-set deviation from vendor parent:** this handler routes the
+ * prompt through `PaymentGate::invokeForReceipt`, which turns every
+ * Throwable except `JsonRpcException` into an error result carrying the
+ * receipt. Vendor's own catch set moved across minors (<= 0.9 caught
+ * `ValidationException` here, >= 1.0 catches every Throwable in
+ * `callHandler`); owning it keeps the settled-payment behaviour
+ * identical on all of them.
  *
  * **Streaming receipts:** like `X402CallTool`, this handler wraps the
  * primitive's iterable via `wrapStreamingForReceipt`, so a settled
@@ -132,14 +131,8 @@ final class X402GetPrompt extends GetPrompt implements Errable
         // Mirrors vendor `GetPrompt::handle` line 41 exactly — a bare
         // `Container::call([$prompt, 'handle'])`. Prompts have no template
         // / app-resource setup, so the parent's invocation IS just this.
-        try {
-            // @phpstan-ignore-next-line argument.type — same shape as parent GetPrompt::handle:41
-            $response = Container::getInstance()->call([$prompt, 'handle']);
-        } catch (AuthorizationException|AuthenticationException $authException) {
-            $response = Response::error($authException->getMessage());
-        } catch (ValidationException $validationException) {
-            $response = Response::error('Invalid params: ' . ValidationMessages::from($validationException));
-        }
+        // @phpstan-ignore-next-line argument.type — same shape as vendor GetPrompt
+        $response = $this->invokeForReceipt(fn (): mixed => Container::getInstance()->call([$prompt, 'handle']));
 
         $receipt = $this->buildReceipt($settle);
 

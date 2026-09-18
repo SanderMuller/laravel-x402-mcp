@@ -633,3 +633,45 @@ it('attaches the receipt to the terminal error frame when the generator throws A
     $meta = $result['_meta'];
     expect($meta['x402/payment-response'] ?? null)->toBe(expectedReceipt());
 });
+
+#[X402Price(amount: '0.01', asset: 'USDC', network: 'base')]
+final class PaidSyncThrowsRuntimeTool extends Tool
+{
+    public function description(): string
+    {
+        return 'Paid tool that throws a generic RuntimeException synchronously after settle.';
+    }
+
+    public function handle(Request $request): Response
+    {
+        throw new RuntimeException('sync generic tool failure');
+    }
+}
+
+it('stamps the receipt when a settled tool throws a generic Throwable synchronously', function (): void {
+    // Companion to the mid-stream test: `PaymentGate::invokeForReceipt`
+    // normalises every non-JsonRpcException failure into an error result,
+    // so the README's "settlement receipt always lands on the response"
+    // guarantee holds on the synchronous path too — and identically on
+    // every supported laravel/mcp minor (<= 0.9 only caught
+    // Auth/Authn/Validation around its own dispatch).
+    $rpcRequest = makeJsonRpcRequest('paid-sync-throws-runtime-tool', [
+        '_meta' => ['x402/payment' => buildPaymentMeta('0x000000000000000000000000000000000000beef')],
+    ]);
+
+    $response = makeCallTool()->handle($rpcRequest, makeServerContext([new PaidSyncThrowsRuntimeTool()]));
+
+    expect($response)->not->toBeInstanceOf(Generator::class);
+
+    /** @var array<string, mixed> $result */
+    $result = $response->toArray()['result'];
+    expect($result['isError'] ?? null)->toBeTrue();
+
+    /** @var list<array<string, mixed>> $content */
+    $content = $result['content'] ?? [];
+    expect($content[0]['text'] ?? null)->toBe('sync generic tool failure');
+
+    /** @var array<string, mixed> $meta */
+    $meta = $result['_meta'];
+    expect($meta['x402/payment-response'] ?? null)->toBe(expectedReceipt());
+});

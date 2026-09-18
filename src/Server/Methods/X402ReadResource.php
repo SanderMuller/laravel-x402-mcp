@@ -14,7 +14,6 @@ use Laravel\Mcp\Server\Contracts\Errable;
 use Laravel\Mcp\Server\Methods\ReadResource;
 use Laravel\Mcp\Server\Resource;
 use Laravel\Mcp\Server\ServerContext;
-use Laravel\Mcp\Support\ValidationMessages;
 use Laravel\Mcp\Transport\JsonRpcRequest;
 use Laravel\Mcp\Transport\JsonRpcResponse;
 use X402\Facilitator\FacilitatorClient;
@@ -117,11 +116,7 @@ final class X402ReadResource extends ReadResource implements Errable
         // are not caught (unlike the tool path) — they propagate to
         // Server::handle and become a JSON-RPC -32603. Same invariant the
         // parent ReadResource ships.
-        try {
-            $response = $this->invokeResource($resource, $uri);
-        } catch (ValidationException $validationException) {
-            $response = Response::error('Invalid params: ' . ValidationMessages::from($validationException));
-        }
+        $response = $this->invokeForReceipt(fn (): mixed => $this->invokeResource($resource, $uri));
 
         $receipt = $this->buildReceipt($settle);
 

@@ -317,6 +317,36 @@ trait PaymentGate
     }
 
     /**
+     * Invoke a settled primitive's handler and normalise every failure into
+     * a `Response::error` so the caller can still stamp the receipt on it.
+     *
+     * Mirrors `wrapStreamingForReceipt` for the synchronous path: a paid
+     * call that has already settled on-chain must emit settlement proof
+     * even when the handler throws. `JsonRpcException` is the explicit
+     * non-catch — it is a handler-authored protocol error that must
+     * surface as a JSON-RPC error envelope, not a result envelope.
+     *
+     * Version note: laravel/mcp <= 0.9 catches Auth/Authn/Validation
+     * around its own handler dispatch, >= 1.0 catches every Throwable
+     * (and rewrites the message outside debug mode). Catching here keeps
+     * the paid path identical on every supported minor.
+     *
+     * @param  Closure(): mixed  $invoke
+     */
+    private function invokeForReceipt(Closure $invoke): mixed
+    {
+        try {
+            return $invoke();
+        } catch (JsonRpcException $jsonRpcException) {
+            throw $jsonRpcException;
+        } catch (ValidationException $validationException) {
+            return Response::error(ValidationMessages::from($validationException));
+        } catch (Throwable $throwable) {
+            return Response::error($throwable->getMessage());
+        }
+    }
+
+    /**
      * Wrap the primitive's iterable so any Throwable thrown mid-stream becomes a
      * terminal Response::error frame instead of propagating past the
      * streaming method. Lets the receipt always land on a settled payment.

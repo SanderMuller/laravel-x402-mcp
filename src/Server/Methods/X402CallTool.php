@@ -5,17 +5,13 @@ declare(strict_types=1);
 namespace X402\Laravel\Mcp\Server\Methods;
 
 use Generator;
-use Illuminate\Auth\Access\AuthorizationException;
-use Illuminate\Auth\AuthenticationException;
 use Illuminate\Container\Container;
-use Illuminate\Validation\ValidationException;
 use Laravel\Mcp\Response;
 use Laravel\Mcp\ResponseFactory;
 use Laravel\Mcp\Server\Methods\CallTool;
 use Laravel\Mcp\Server\Methods\Concerns\InteractsWithResponses;
 use Laravel\Mcp\Server\ServerContext;
 use Laravel\Mcp\Server\Tool;
-use Laravel\Mcp\Support\ValidationMessages;
 use Laravel\Mcp\Transport\JsonRpcRequest;
 use Laravel\Mcp\Transport\JsonRpcResponse;
 use X402\Facilitator\FacilitatorClient;
@@ -60,12 +56,20 @@ use X402\Replay\NonceStoreContract;
  * fails after the claim, the nonce is burned and the user must
  * regenerate.
  *
- * **Streaming receipt asymmetry:** unlike `X402ReadResource` and
- * `X402GetPrompt`, this handler wraps the tool's iterable via
- * `wrapStreamingForReceipt` so settled payments still emit a receipt
- * even when the tool throws mid-stream. The other two handlers rely on
- * vendor `toJsonRpcStreamedResponse`, which only catches
- * Auth/Authn/Validation. Asymmetry is intentional and pinned by tests.
+ * **Receipt guarantee:** like `X402ReadResource` and `X402GetPrompt`,
+ * this handler routes the tool through `PaymentGate::invokeForReceipt`
+ * (synchronous path) and `PaymentGate::wrapStreamingForReceipt`
+ * (iterables), so a settled payment always emits its receipt — even when
+ * the tool throws. Only `JsonRpcException` escapes, as a transport-level
+ * protocol error. Owning the catch here also makes the behaviour
+ * independent of vendor drift: `laravel/mcp` <= 0.9 caught
+ * Auth/Authn/Validation around its own dispatch, >= 1.0 catches every
+ * Throwable and rewrites the message outside debug mode.
+ *
+ * **Version note:** `CallTool` dropped `InteractsWithResponses` and
+ * `serializable()` in 1.0 (both moved to `Server\ToolInvoker`), so this
+ * class composes the trait and declares the serializer itself. That is
+ * valid on every supported minor.
  */
 final class X402CallTool extends CallTool
 {
@@ -140,16 +144,10 @@ final class X402CallTool extends CallTool
     private function runToolWithReceipt(JsonRpcRequest $request, Tool $tool, SettleResult $settle): Generator|JsonRpcResponse
     {
         // Replicates the parent's runtime call so we can wrap the response
-        // before serialisation. Auth/validation exceptions are caught here
-        // so settled-but-rejected payments don't leak the tool result —
-        // same shape as the parent's catch block.
-        try {
-            $response = Container::getInstance()->call([$tool, 'handle']);
-        } catch (AuthorizationException|AuthenticationException $authException) {
-            $response = Response::error($authException->getMessage());
-        } catch (ValidationException $validationException) {
-            $response = Response::error(ValidationMessages::from($validationException));
-        }
+        // before serialisation. `invokeForReceipt` turns every failure
+        // (except JsonRpcException) into an error result, so a settled
+        // payment always carries its receipt.
+        $response = $this->invokeForReceipt(fn (): mixed => Container::getInstance()->call([$tool, 'handle']));
 
         $receipt = $this->buildReceipt($settle);
 

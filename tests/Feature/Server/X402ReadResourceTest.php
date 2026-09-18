@@ -310,7 +310,7 @@ final class PaidStreamingThrowsRuntimeResource extends Resource
 
     public function description(): string
     {
-        return 'Paid streaming resource that yields one notification then throws RuntimeException — pins the asymmetry vs X402CallTool.';
+        return 'Paid streaming resource that yields one notification then throws RuntimeException — the wrapper stamps the receipt on the terminal frame.';
     }
 
     /**
@@ -412,6 +412,45 @@ it('stamps the receipt on the terminal error frame for vendor-caught mid-stream 
 
     /** @var array<string, mixed> $result */
     $result = $terminal['result'];
+
+    /** @var array<string, mixed> $meta */
+    $meta = $result['_meta'];
+    expect($meta['x402/payment-response'] ?? null)->toBe(expectedReceipt());
+});
+
+#[X402Price(amount: '0.01', asset: 'USDC', network: 'base')]
+final class PaidSyncThrowsRuntimeResource extends Resource
+{
+    protected string $uri = 'mcp://test/paid-sync-throws-runtime-resource';
+
+    public function description(): string
+    {
+        return 'Paid resource that throws a generic RuntimeException synchronously after settle.';
+    }
+
+    public function handle(): Response
+    {
+        throw new RuntimeException('sync generic resource failure');
+    }
+}
+
+it('stamps the receipt when a settled resource throws a generic Throwable synchronously', function (): void {
+    // `PaymentGate::invokeForReceipt` normalises every non-JsonRpcException
+    // failure into an error result, so settlement proof survives a
+    // post-settle handler failure on the synchronous path as well.
+    $rpcRequest = makeReadResourceRequest('mcp://test/paid-sync-throws-runtime-resource', [
+        '_meta' => ['x402/payment' => buildPaymentMeta('0x000000000000000000000000000000000000beef')],
+    ]);
+
+    $response = makeReadResource()->handle(
+        $rpcRequest,
+        makeResourceContext([new PaidSyncThrowsRuntimeResource()]),
+    );
+
+    expect($response)->not->toBeInstanceOf(Generator::class);
+
+    /** @var array<string, mixed> $result */
+    $result = $response->toArray()['result'];
 
     /** @var array<string, mixed> $meta */
     $meta = $result['_meta'];

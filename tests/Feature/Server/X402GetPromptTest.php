@@ -243,7 +243,7 @@ final class PaidStreamingThrowsRuntimePrompt extends Prompt
 {
     public function description(): string
     {
-        return 'Paid streaming prompt that yields one notification then throws RuntimeException — pins the asymmetry vs X402CallTool.';
+        return 'Paid streaming prompt that yields one notification then throws RuntimeException — the wrapper stamps the receipt on the terminal frame.';
     }
 
     /**
@@ -343,6 +343,43 @@ it('stamps the receipt on the terminal error frame for vendor-caught mid-stream 
 
     /** @var array<string, mixed> $result */
     $result = $terminal['result'];
+
+    /** @var array<string, mixed> $meta */
+    $meta = $result['_meta'];
+    expect($meta['x402/payment-response'] ?? null)->toBe(expectedReceipt());
+});
+
+#[X402Price(amount: '0.01', asset: 'USDC', network: 'base')]
+final class PaidSyncThrowsRuntimePrompt extends Prompt
+{
+    public function description(): string
+    {
+        return 'Paid prompt that throws a generic RuntimeException synchronously after settle.';
+    }
+
+    public function handle(): Response
+    {
+        throw new RuntimeException('sync generic prompt failure');
+    }
+}
+
+it('stamps the receipt when a settled prompt throws a generic Throwable synchronously', function (): void {
+    // `PaymentGate::invokeForReceipt` normalises every non-JsonRpcException
+    // failure into an error result, so settlement proof survives a
+    // post-settle handler failure on the synchronous path as well.
+    $rpcRequest = makeGetPromptRequest('paid-sync-throws-runtime-prompt', [
+        '_meta' => ['x402/payment' => buildPaymentMeta('0x000000000000000000000000000000000000beef')],
+    ]);
+
+    $response = makeGetPrompt()->handle(
+        $rpcRequest,
+        makePromptContext([new PaidSyncThrowsRuntimePrompt()]),
+    );
+
+    expect($response)->not->toBeInstanceOf(Generator::class);
+
+    /** @var array<string, mixed> $result */
+    $result = $response->toArray()['result'];
 
     /** @var array<string, mixed> $meta */
     $meta = $result['_meta'];
