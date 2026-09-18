@@ -58,6 +58,8 @@ trait PaymentGate
 {
     private const META_REQUEST_KEY = 'x402/payment';
 
+    private const META_RESPONSE_KEY = 'x402/payment-response';
+
     /**
      * Set when the settled primitive's handler threw. The result still
      * carries the receipt, but it must never enter the idempotency cache:
@@ -66,8 +68,6 @@ trait PaymentGate
      * cannot be distinguished from a successful one.
      */
     private bool $settledHandlerFailed = false;
-
-    private const META_RESPONSE_KEY = 'x402/payment-response';
 
     /**
      * Template method shared by all three handlers. Owns the post-resolve
@@ -78,10 +78,12 @@ trait PaymentGate
      *   1. **Cache lookup precedes `guardReplay`.** A legitimate retry of a
      *      previously settled call must hit the cache before the nonce
      *      store rejects the duplicate authorization.
-     *   2. **Cache store skips `Generator` and `isError: true` results.**
-     *      Streamed responses have no atomic snapshot; tool errors on a
-     *      settled payment may carry transient state and deserve a fresh
-     *      handler call on retry.
+     *   2. **Cache store skips `Generator` results, `isError: true`
+     *      results, and any call whose handler threw.** Streamed responses
+     *      have no atomic snapshot; errors on a settled payment may carry
+     *      transient state and deserve a fresh handler call on retry. The
+     *      thrown-handler case needs its own flag because the resource and
+     *      prompt serializers emit no `isError` key.
      *   3. **Snapshot shape is `['result' => $resultPayload]` exactly.**
      *      `PaidToolResponseCache::isValidSnapshot` rejects anything else.
      *
@@ -365,9 +367,14 @@ trait PaymentGate
             return Response::error($throwable->getMessage());
         }
 
-        /** @var ExceptionHandler $handler */
-        $handler = $container->make(ExceptionHandler::class);
-        $handler->report($throwable);
+        try {
+            /** @var ExceptionHandler $handler */
+            $handler = $container->make(ExceptionHandler::class);
+            $handler->report($throwable);
+        } catch (Throwable) {
+            // Reporting is best-effort. A misconfigured or missing handler
+            // must not swallow the receipt this method exists to preserve.
+        }
 
         return Response::error('An internal server error occurred.');
     }

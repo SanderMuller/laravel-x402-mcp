@@ -675,3 +675,32 @@ it('stamps the receipt when a settled tool throws a generic Throwable synchronou
     $meta = $result['_meta'];
     expect($meta['x402/payment-response'] ?? null)->toBe(expectedReceipt());
 });
+
+it('hides the exception message of a mid-stream failure when app.debug is off', function (): void {
+    // Same redaction as the synchronous path — the streaming wrapper routes
+    // through `PaymentGate::postSettleErrorResponse` too, so a paid stream
+    // cannot leak internal exception text on its terminal frame.
+    config()->set('app.debug', false);
+
+    $rpcRequest = makeJsonRpcRequest('paid-streaming-throws-runtime-tool', [
+        '_meta' => ['x402/payment' => buildPaymentMeta('0x000000000000000000000000000000000000beef')],
+    ]);
+
+    $frames = streamFrames(
+        makeCallTool()->handle($rpcRequest, makeServerContext([new PaidStreamingThrowsRuntimeTool()])),
+    );
+
+    $terminal = $frames[1]->toArray();
+
+    /** @var array<string, mixed> $result */
+    $result = $terminal['result'];
+    expect($result['isError'] ?? null)->toBeTrue();
+
+    /** @var list<array<string, mixed>> $content */
+    $content = $result['content'] ?? [];
+    expect($content[0]['text'] ?? null)->toBe('An internal server error occurred.');
+
+    /** @var array<string, mixed> $meta */
+    $meta = $result['_meta'];
+    expect($meta['x402/payment-response'] ?? null)->toBe(expectedReceipt());
+});
