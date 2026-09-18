@@ -15,6 +15,7 @@ on:
       # so composer metadata belongs in this filter too.
       - 'composer.json'
       - 'composer.lock'
+      - 'testbench.yaml'
   pull_request:
     paths:
       - '**.php'
@@ -26,6 +27,7 @@ on:
       # so composer metadata belongs in this filter too.
       - 'composer.json'
       - 'composer.lock'
+      - 'testbench.yaml'
 
 concurrency:
   group: phpstan-${{ github.ref }}
