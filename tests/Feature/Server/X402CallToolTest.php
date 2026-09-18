@@ -4,13 +4,14 @@ declare(strict_types=1);
 
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
+use Laravel\Mcp\Exceptions\JsonRpcException;
 use Laravel\Mcp\Response;
-use Laravel\Mcp\Server\Exceptions\JsonRpcException;
+use Laravel\Mcp\Schema\Implementation;
 use Laravel\Mcp\Server\Methods\CallTool;
 use Laravel\Mcp\Server\ServerContext;
 use Laravel\Mcp\Server\Tool;
-use Laravel\Mcp\Server\Transport\JsonRpcRequest;
-use Laravel\Mcp\Server\Transport\JsonRpcResponse;
+use Laravel\Mcp\Transport\JsonRpcRequest;
+use Laravel\Mcp\Transport\JsonRpcResponse;
 use X402\Facilitator\DiscoveryPage;
 use X402\Facilitator\DiscoveryQuery;
 use X402\Facilitator\FacilitatorClient;
@@ -186,8 +187,7 @@ function makeServerContext(array $tools): ServerContext
     return new ServerContext(
         supportedProtocolVersions: ['2025-11-25'],
         serverCapabilities: [],
-        serverName: 'test',
-        serverVersion: '0.0.1',
+        implementation: new Implementation('test', '0.0.1'),
         instructions: '',
         maxPaginationLength: 50,
         defaultPaginationLength: 15,
@@ -445,24 +445,18 @@ it('delegates unknown tool names to the parent CallTool which throws JsonRpcExce
 
 it('pins the parent CallTool invocation contract for AuthorizationException', function (): void {
     // CONTRACT TEST. X402CallTool::runToolWithReceipt mirrors parent
-    // CallTool::handle's Container::call + Auth/Validation catch (see
-    // vendor/laravel/mcp/src/Server/Methods/CallTool.php:53-60). If
+    // CallTool's Container::call + Auth/Validation catch. If
     // upstream ever changes that catch shape — drops a clause, swaps
     // exceptions, moves the dispatch elsewhere — paid tools would
     // silently lose the parity. This test pins the upstream behavior
     // by exercising the parent class directly. When this fails, audit
     // X402CallTool::runToolWithReceipt for the same change.
     //
-    // laravel/mcp < 0.7 only caught ValidationException — the
-    // AuthorizationException catch landed in 0.7. Under prefer-lowest
-    // (0.6.x) the parent rethrows; the parity test below still
-    // verifies *our* catch shape against that older parent.
-    $filename = (new ReflectionMethod(CallTool::class, 'handle'))->getFileName();
-    $body = is_string($filename) ? file_get_contents($filename) : false;
-    if (! is_string($body) || ! str_contains($body, 'AuthorizationException $authException')) {
-        test()->markTestSkipped('parent CallTool::handle predates the AuthorizationException catch (laravel/mcp < 0.7)');
-    }
-
+    // Behavioural, not source-sniffing: laravel/mcp moved the catch from
+    // `CallTool::handle` (<= 0.9) into `ToolInvoker` /
+    // `InteractsWithResponses::callHandler` (>= 1.0). What must stay stable
+    // across the supported range is the *result*: an AuthorizationException
+    // becomes an `isError` tool result carrying the exception message.
     $parent = new CallTool();
 
     $rpcRequest = makeJsonRpcRequest('free-unauthorized-tool');

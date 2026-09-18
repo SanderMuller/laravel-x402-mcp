@@ -4,10 +4,11 @@ declare(strict_types=1);
 
 use Illuminate\Auth\Access\AuthorizationException;
 use Laravel\Mcp\Response;
+use Laravel\Mcp\Schema\Implementation;
 use Laravel\Mcp\Server\Prompt;
 use Laravel\Mcp\Server\ServerContext;
-use Laravel\Mcp\Server\Transport\JsonRpcRequest;
-use Laravel\Mcp\Server\Transport\JsonRpcResponse;
+use Laravel\Mcp\Transport\JsonRpcRequest;
+use Laravel\Mcp\Transport\JsonRpcResponse;
 use X402\Facilitator\DiscoveryPage;
 use X402\Facilitator\DiscoveryQuery;
 use X402\Facilitator\FacilitatorClient;
@@ -66,8 +67,7 @@ function makePromptContext(array $prompts): ServerContext
     return new ServerContext(
         supportedProtocolVersions: ['2025-11-25'],
         serverCapabilities: [],
-        serverName: 'test',
-        serverVersion: '0.0.1',
+        implementation: new Implementation('test', '0.0.1'),
         instructions: '',
         maxPaginationLength: 50,
         defaultPaginationLength: 15,
@@ -257,13 +257,14 @@ final class PaidStreamingThrowsRuntimePrompt extends Prompt
     }
 }
 
-it('does NOT wrap mid-stream Throwables (asymmetry vs X402CallTool) — generic exceptions propagate past the receipt', function (): void {
-    // Pinned by Codex review (§2.6): X402GetPrompt mirrors X402ReadResource
-    // here, NOT X402CallTool. Vendor toJsonRpcStreamedResponse catches
-    // Auth/Authn/Validation only — generic Throwables propagate. This
-    // test pins the intentional regression surface so a future
-    // "consistency pass" doesn't silently extend wrapStreamingForReceipt
-    // to all three handlers.
+it('stamps the receipt on the terminal frame when the prompt throws a generic Throwable mid-stream', function (): void {
+    // All three gated handlers wrap the primitive's iterable via
+    // `PaymentGate::wrapStreamingForReceipt`, so a settled payment always
+    // emits settlement proof — the README "post-settle failure" guarantee.
+    // The wrapper also makes this version-independent: laravel/mcp <= 0.9
+    // only catches Auth/Authn/Validation inside `toJsonRpcStreamedResponse`,
+    // while >= 1.0 catches every Throwable and rewrites the message to
+    // 'An internal server error occurred.' outside debug mode.
     $rpcRequest = makeGetPromptRequest('paid-streaming-throws-runtime-prompt', [
         '_meta' => ['x402/payment' => buildPaymentMeta('0x000000000000000000000000000000000000beef')],
     ]);
@@ -275,16 +276,19 @@ it('does NOT wrap mid-stream Throwables (asymmetry vs X402CallTool) — generic 
 
     expect($generator)->toBeInstanceOf(Generator::class);
 
-    $threw = false;
-    try {
-        /** @var Generator<int, mixed> $generator */
-        iterator_to_array($generator, preserve_keys: false);
-    } catch (RuntimeException $runtimeException) {
-        $threw = true;
-        expect($runtimeException->getMessage())->toBe('mid-stream generic prompt failure');
-    }
+    /** @var Generator<int, JsonRpcResponse> $generator */
+    $frames = iterator_to_array($generator, preserve_keys: false);
 
-    expect($threw)->toBeTrue('Expected the generic mid-stream Throwable to propagate past the receipt.');
+    expect($frames)->toHaveCount(2);
+
+    $terminal = $frames[1]->toArray();
+
+    /** @var array<string, mixed> $result */
+    $result = $terminal['result'];
+
+    /** @var array<string, mixed> $meta */
+    $meta = $result['_meta'];
+    expect($meta['x402/payment-response'] ?? null)->toBe(expectedReceipt());
 });
 
 #[X402Price(amount: '0.01', asset: 'USDC', network: 'base')]

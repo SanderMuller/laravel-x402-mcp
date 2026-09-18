@@ -4,9 +4,10 @@ declare(strict_types=1);
 
 use Illuminate\Http\Request;
 use Laravel\Mcp\Response;
+use Laravel\Mcp\Schema\Implementation;
 use Laravel\Mcp\Server\ServerContext;
 use Laravel\Mcp\Server\Tool;
-use Laravel\Mcp\Server\Transport\JsonRpcRequest;
+use Laravel\Mcp\Transport\JsonRpcRequest;
 use X402\Laravel\Mcp\Attributes\X402Price;
 use X402\Laravel\Mcp\Server\Methods\X402ListTools;
 
@@ -18,8 +19,7 @@ function makeListContext(array $tools): ServerContext
     return new ServerContext(
         supportedProtocolVersions: ['2025-11-25'],
         serverCapabilities: [],
-        serverName: 'test',
-        serverVersion: '0.0.1',
+        implementation: new Implementation('test', '0.0.1'),
         instructions: '',
         maxPaginationLength: 50,
         defaultPaginationLength: 15,

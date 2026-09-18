@@ -7,16 +7,16 @@ namespace X402\Laravel\Mcp\Server\Methods;
 use Generator;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
+use Laravel\Mcp\Exceptions\JsonRpcException;
 use Laravel\Mcp\Response;
 use Laravel\Mcp\ResponseFactory;
 use Laravel\Mcp\Server\Contracts\Errable;
-use Laravel\Mcp\Server\Exceptions\JsonRpcException;
 use Laravel\Mcp\Server\Methods\ReadResource;
 use Laravel\Mcp\Server\Resource;
 use Laravel\Mcp\Server\ServerContext;
-use Laravel\Mcp\Server\Transport\JsonRpcRequest;
-use Laravel\Mcp\Server\Transport\JsonRpcResponse;
 use Laravel\Mcp\Support\ValidationMessages;
+use Laravel\Mcp\Transport\JsonRpcRequest;
+use Laravel\Mcp\Transport\JsonRpcResponse;
 use X402\Facilitator\FacilitatorClient;
 use X402\Facilitator\SettleResult;
 use X402\Laravel\Mcp\Attributes\X402Price;
@@ -54,11 +54,12 @@ use X402\Replay\NonceStoreContract;
  * `mcp.library_scripts` for `AppResource`s; reimplementing would
  * silently break templated and app-resource handlers under x402 gating.
  *
- * **Streaming receipt asymmetry:** unlike `X402CallTool`, this handler
- * does NOT wrap the resource's iterable. Mid-stream Throwables propagate
- * to vendor `toJsonRpcStreamedResponse`, which catches Auth/Authn/Validation
- * only — generic Throwables propagate past the receipt. Asymmetry mirrors
- * vendor `ReadResource` and is pinned by tests.
+ * **Streaming receipts:** like `X402CallTool`, this handler wraps the
+ * primitive's iterable via `wrapStreamingForReceipt`, so a settled
+ * payment always emits `result._meta["x402/payment-response"]` — even
+ * when the handler throws mid-stream. Vendor's streaming catch set
+ * changed across `laravel/mcp` minors; the wrapper makes the receipt
+ * guarantee independent of it.
  */
 final class X402ReadResource extends ReadResource implements Errable
 {
@@ -125,14 +126,16 @@ final class X402ReadResource extends ReadResource implements Errable
         $receipt = $this->buildReceipt($settle);
 
         if (is_iterable($response)) {
-            // No mid-stream wrapping (unlike X402CallTool) — vendor
-            // toJsonRpcStreamedResponse catches Auth/Authn/Validation
-            // only. Asymmetry mirrors vendor ReadResource and is
-            // pinned by tests.
+            // Wrapped exactly like X402CallTool: a settled payment always
+            // emits its receipt, even when the resource throws mid-stream.
+            // Vendor's own catch set differs between laravel/mcp minors
+            // (<= 0.9 catches Auth/Authn/Validation, >= 1.0 catches every
+            // Throwable), so the wrapper is what keeps the receipt
+            // guarantee version-independent.
             /** @var iterable<Response|ResponseFactory|string> $response */
             return $this->toJsonRpcStreamedResponse(
                 $request,
-                $response,
+                $this->wrapStreamingForReceipt($response),
                 $this->streamingSerializable($this->serializable($resource, $uri), $receipt),
             );
         }

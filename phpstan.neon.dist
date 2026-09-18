@@ -120,3 +120,18 @@ parameters:
                 - src/Server/Methods/X402ListResources.php
                 - src/Server/Methods/X402ListPrompts.php
             reportUnmatched: false
+        # laravel/mcp 1.0 widened `Server::$tools` to allow ToolSearch groups
+        # (`array<int|string, Tool|class-string<Tool>|array<...>>`). Test
+        # servers declare the narrow list shape, which is correct for every
+        # supported minor but not *identical* to the 1.0 parent PHPDoc.
+        -
+            identifier: property.phpDocType
+            path: tests/
+            reportUnmatched: false
+        # `ReadResource::invokeResource()` documents `@throws ValidationException`
+        # on laravel/mcp <= 0.9 and swallows it internally on >= 1.0. The catch
+        # is live on the older minors, dead on 1.0.
+        -
+            identifier: catch.neverThrown
+            path: src/Server/Methods/X402ReadResource.php
+            reportUnmatched: false

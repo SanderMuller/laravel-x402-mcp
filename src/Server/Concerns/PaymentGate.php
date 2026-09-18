@@ -7,11 +7,15 @@ namespace X402\Laravel\Mcp\Server\Concerns;
 use Closure;
 use Generator;
 use Illuminate\Support\Facades\Date;
+use Illuminate\Validation\ValidationException;
+use Laravel\Mcp\Exceptions\JsonRpcException;
 use Laravel\Mcp\Response;
 use Laravel\Mcp\ResponseFactory;
 use Laravel\Mcp\Server\Primitive;
-use Laravel\Mcp\Server\Transport\JsonRpcRequest;
-use Laravel\Mcp\Server\Transport\JsonRpcResponse;
+use Laravel\Mcp\Support\ValidationMessages;
+use Laravel\Mcp\Transport\JsonRpcRequest;
+use Laravel\Mcp\Transport\JsonRpcResponse;
+use Throwable;
 use X402\Errors\ErrorReason;
 use X402\Exceptions\InvalidPaymentException;
 use X402\Facilitator\SettleResult;
@@ -310,6 +314,33 @@ trait PaymentGate
             /** @var array<string, mixed> */
             return $base($factory);
         };
+    }
+
+    /**
+     * Wrap the primitive's iterable so any Throwable thrown mid-stream becomes a
+     * terminal Response::error frame instead of propagating past the
+     * streaming method. Lets the receipt always land on a settled payment.
+     *
+     * JsonRpcException is the explicit non-catch — it represents a
+     * tool-authored protocol error that must surface as a JSON-RPC error
+     * envelope, not a tool-result envelope.
+     *
+     * @param  iterable<Response|ResponseFactory|string>  $responses
+     * @return Generator<int, Response|ResponseFactory|string>
+     */
+    private function wrapStreamingForReceipt(iterable $responses): Generator
+    {
+        try {
+            foreach ($responses as $response) {
+                yield $response;
+            }
+        } catch (JsonRpcException $jsonRpcException) {
+            throw $jsonRpcException;
+        } catch (ValidationException $validationException) {
+            yield Response::error(ValidationMessages::from($validationException));
+        } catch (Throwable $throwable) {
+            yield Response::error($throwable->getMessage());
+        }
     }
 
     /**
