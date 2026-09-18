@@ -1,7 +1,6 @@
 laravel: '@testbench'
 
 providers:
-  - SanderMuller\PackageBoost\PackageBoostServiceProvider
   - X402\Laravel\X402ServiceProvider
   - X402\Laravel\Mcp\X402McpServiceProvider
   - Workbench\App\Providers\WorkbenchServiceProvider
