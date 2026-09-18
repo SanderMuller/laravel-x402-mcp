@@ -6,6 +6,11 @@ namespace X402\Laravel\Mcp\Server\Concerns;
 
 use Closure;
 use Generator;
+use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Auth\AuthenticationException;
+use Illuminate\Container\Container;
+use Illuminate\Contracts\Config\Repository as ConfigRepository;
+use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Validation\ValidationException;
 use Laravel\Mcp\Exceptions\JsonRpcException;
@@ -53,6 +58,15 @@ trait PaymentGate
 {
     private const META_REQUEST_KEY = 'x402/payment';
 
+    /**
+     * Set when the settled primitive's handler threw. The result still
+     * carries the receipt, but it must never enter the idempotency cache:
+     * `ReadResource` / `GetPrompt` serializers emit `{contents}` /
+     * `{description, messages}` with no `isError` key, so the payload alone
+     * cannot be distinguished from a successful one.
+     */
+    private bool $settledHandlerFailed = false;
+
     private const META_RESPONSE_KEY = 'x402/payment-response';
 
     /**
@@ -97,6 +111,11 @@ trait PaymentGate
         if (! $price instanceof X402Price) {
             return $priceAbsentPassthrough();
         }
+
+        // Reset per invocation: handlers are resolved fresh per JSON-RPC
+        // message in production, but a reused instance must not carry a
+        // previous call's failure into this one's cache decision.
+        $this->settledHandlerFailed = false;
 
         $challenge = $buildChallenge($price, $target);
         $paymentMeta = $this->readPaymentMeta($request);
@@ -162,7 +181,7 @@ trait PaymentGate
             $body = $response->toArray();
             $resultPayload = $body['result'] ?? null;
 
-            if (is_array($resultPayload) && ($resultPayload['isError'] ?? false) !== true) {
+            if (is_array($resultPayload) && ($resultPayload['isError'] ?? false) !== true && ! $this->settledHandlerFailed) {
                 $this->responseCache->store($scope, $signature, ['result' => $resultPayload]);
             }
         }
@@ -317,6 +336,43 @@ trait PaymentGate
     }
 
     /**
+     * Shape a post-settle handler failure into an error `Response`.
+     *
+     * Mirrors `laravel/mcp` 1.0's `InteractsWithResponses::toErrorResponse`:
+     * validation and auth failures are the caller's own fault and carry
+     * their message, anything else is reported and replaced with a generic
+     * string unless `app.debug` is on. Without that last step the unified
+     * catch would turn every internal exception message (DSNs, driver
+     * errors, file paths) into wire output on a paid call — the older
+     * laravel/mcp minors never surfaced those.
+     */
+    private function postSettleErrorResponse(Throwable $throwable): Response
+    {
+        if ($throwable instanceof ValidationException) {
+            return Response::error(ValidationMessages::from($throwable));
+        }
+
+        if ($throwable instanceof AuthenticationException || $throwable instanceof AuthorizationException) {
+            return Response::error($throwable->getMessage());
+        }
+
+        $container = Container::getInstance();
+
+        /** @var ConfigRepository $config */
+        $config = $container->make(ConfigRepository::class);
+
+        if ($config->get('app.debug', false) === true) {
+            return Response::error($throwable->getMessage());
+        }
+
+        /** @var ExceptionHandler $handler */
+        $handler = $container->make(ExceptionHandler::class);
+        $handler->report($throwable);
+
+        return Response::error('An internal server error occurred.');
+    }
+
+    /**
      * Invoke a settled primitive's handler and normalise every failure into
      * a `Response::error` so the caller can still stamp the receipt on it.
      *
@@ -339,10 +395,10 @@ trait PaymentGate
             return $invoke();
         } catch (JsonRpcException $jsonRpcException) {
             throw $jsonRpcException;
-        } catch (ValidationException $validationException) {
-            return Response::error(ValidationMessages::from($validationException));
         } catch (Throwable $throwable) {
-            return Response::error($throwable->getMessage());
+            $this->settledHandlerFailed = true;
+
+            return $this->postSettleErrorResponse($throwable);
         }
     }
 
@@ -366,10 +422,10 @@ trait PaymentGate
             }
         } catch (JsonRpcException $jsonRpcException) {
             throw $jsonRpcException;
-        } catch (ValidationException $validationException) {
-            yield Response::error(ValidationMessages::from($validationException));
         } catch (Throwable $throwable) {
-            yield Response::error($throwable->getMessage());
+            $this->settledHandlerFailed = true;
+
+            yield $this->postSettleErrorResponse($throwable);
         }
     }
 
