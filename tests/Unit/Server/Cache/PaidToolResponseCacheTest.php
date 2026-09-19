@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use DateInterval;
 use Psr\Log\AbstractLogger;
 use Psr\SimpleCache\CacheInterface;
 use X402\Laravel\Mcp\Server\Cache\CacheScope;

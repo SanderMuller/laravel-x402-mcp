@@ -12,6 +12,7 @@ on:
       - 'composer.json'
       - 'composer.lock'
       - 'testbench.yaml'
+      - 'workbench/**'
   pull_request:
     paths:
       - '**.php'
@@ -20,6 +21,7 @@ on:
       - 'composer.json'
       - 'composer.lock'
       - 'testbench.yaml'
+      - 'workbench/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -35,15 +37,16 @@ jobs:
         # PHP 8.3 dropped: composer.json requires php ^8.4, inherited from
         # sandermuller/laravel-x402 0.8.
         # L11 dropped: laravel-x402 0.8 requires illuminate ^12|^13.
+        # L12 has no cell: Pest 5 needs symfony/process ^8.1 and testbench 10
+        # pins ^7.2, so the pair cannot install. Laravel 12 stays in `require`
+        # and breakage there is still a bug — it just isn't matrix-covered.
         php: ['8.4']
-        laravel: ['12.*', '13.*']
+        laravel: ['13.*']
         stability: [prefer-lowest, prefer-stable]
         # Newest supported laravel/mcp on the full PHP x stability grid; the
         # older supported minors get one cell each below (see `include`).
         mcp: ['^1.0']
         include:
-          - laravel: '12.*'
-            testbench: '10.*'
           - laravel: '13.*'
             testbench: '11.*'
           # One cell per older supported laravel/mcp minor. 0.7.1 is the
@@ -69,6 +72,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2

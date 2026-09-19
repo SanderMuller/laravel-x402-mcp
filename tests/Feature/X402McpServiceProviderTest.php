@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Contracts\Cache\Factory;
 use Illuminate\Contracts\Config\Repository;
 use Psr\SimpleCache\CacheInterface;
 use X402\Laravel\Mcp\Server\Cache\PaidToolResponseCache;
@@ -27,7 +28,7 @@ it('honours x402_mcp.response_cache.prefix override when set', function (): void
 
 it('falls back to the JSON-RPC default prefix when no config is set', function (): void {
     $config = $this->app->make(Repository::class);
-    $config->set('x402_mcp.response_cache.prefix', null);
+    $config->set('x402_mcp.response_cache.prefix');
 
     /** @var PaidToolResponseCache $cache */
     $cache = $this->app->make(PaidToolResponseCache::class);
@@ -64,18 +65,18 @@ it('binds the cache against the configured x402.response_cache.cache_store overr
     $bridge = (fn (): CacheInterface => $this->cache)->call($cache);
     $bridge->set('x402-mcp:test:store-binding', 'WROTE_VIA_BRIDGE', 60);
 
-    $namedStore = $this->app->make('cache')->store('x402_idem_test');
+    $namedStore = $this->app->make(Factory::class)->store('x402_idem_test');
     expect($namedStore->get('x402-mcp:test:store-binding'))->toBe('WROTE_VIA_BRIDGE');
 
     // Negative — the default store must NOT have the entry. Proves
     // the SP isn't double-writing or quietly falling back.
-    $defaultStore = $this->app->make('cache')->store();
+    $defaultStore = $this->app->make(Factory::class)->store();
     expect($defaultStore->get('x402-mcp:test:store-binding'))->toBeNull();
 });
 
 it('falls back to the default cache store when x402.response_cache.cache_store is unset', function (): void {
     $config = $this->app->make(Repository::class);
-    $config->set('x402.response_cache.cache_store', null);
+    $config->set('x402.response_cache.cache_store');
 
     /** @var PaidToolResponseCache $cache */
     $cache = $this->app->make(PaidToolResponseCache::class);
@@ -83,6 +84,6 @@ it('falls back to the default cache store when x402.response_cache.cache_store i
     $bridge = (fn (): CacheInterface => $this->cache)->call($cache);
     $bridge->set('x402-mcp:test:default-store-binding', 'WROTE_VIA_BRIDGE', 60);
 
-    $defaultStore = $this->app->make('cache')->store();
+    $defaultStore = $this->app->make(Factory::class)->store();
     expect($defaultStore->get('x402-mcp:test:default-store-binding'))->toBe('WROTE_VIA_BRIDGE');
 });
