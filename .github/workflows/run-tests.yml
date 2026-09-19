@@ -32,10 +32,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # PHP 8.2 dropped: composer.json requires php ^8.3.
-        # L11 dropped: require-dev laravel/pao ^1.0 hard-conflicts with laravel/framework <12.0.
-        php: ['8.3', '8.4']
-        laravel: ['12.*']
+        # PHP 8.3 dropped: composer.json requires php ^8.4, inherited from
+        # sandermuller/laravel-x402 0.8.
+        # L11 dropped: laravel-x402 0.8 requires illuminate ^12|^13.
+        php: ['8.4']
+        laravel: ['12.*', '13.*']
         stability: [prefer-lowest, prefer-stable]
         # Newest supported laravel/mcp on the full PHP x stability grid; the
         # older supported minors get one cell each below (see `include`).
@@ -43,22 +44,24 @@ jobs:
         include:
           - laravel: '12.*'
             testbench: '10.*'
+          - laravel: '13.*'
+            testbench: '11.*'
           # One cell per older supported laravel/mcp minor. 0.7.1 is the
           # floor: 0.7.0 still had the pre-relocation
           # `Laravel\Mcp\Server\Transport\*` namespace.
           - php: '8.4'
-            laravel: '12.*'
-            testbench: '10.*'
+            laravel: '13.*'
+            testbench: '11.*'
             stability: prefer-stable
             mcp: '^0.7.1'
           - php: '8.4'
-            laravel: '12.*'
-            testbench: '10.*'
+            laravel: '13.*'
+            testbench: '11.*'
             stability: prefer-stable
             mcp: '^0.8'
           - php: '8.4'
-            laravel: '12.*'
-            testbench: '10.*'
+            laravel: '13.*'
+            testbench: '11.*'
             stability: prefer-stable
             mcp: '^0.9'
 

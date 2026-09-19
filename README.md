@@ -7,7 +7,7 @@
 
 Gate [`laravel/mcp`](https://github.com/laravel/mcp) tools behind x402 stablecoin payments. Conformant with the x402 v2 MCP transport spec (`specs/transports-v2/mcp.md`).
 
-Bridge between [`sandermuller/laravel-x402`](https://github.com/sandermuller/laravel-x402) (^0.5) and `laravel/mcp` (^0.7.1 through ^1.0). Annotate paid tools with the `#[X402Price]` attribute. Agents include the signed payment payload in `params._meta["x402/payment"]` (JSON-RPC level — not an HTTP header). The advertised price travels back on `tools/list` / `resources/list` / `prompts/list` via `_meta["x402/price"]`.
+Bridge between [`sandermuller/laravel-x402`](https://github.com/sandermuller/laravel-x402) (^0.8) and `laravel/mcp` (^0.7.1 through ^1.0), on PHP 8.4+ and Laravel 12 or 13. Annotate paid tools with the `#[X402Price]` attribute. Agents include the signed payment payload in `params._meta["x402/payment"]` (JSON-RPC level — not an HTTP header). The advertised price travels back on `tools/list` / `resources/list` / `prompts/list` via `_meta["x402/price"]`.
 
 ## Install
 
