@@ -5,10 +5,18 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # Let a release settle before a bump lands, so a version yanked within
+    # days of publishing never reaches a PR here.
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 10
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    # Let a release settle before a bump lands, so a version yanked within
+    # days of publishing never reaches a PR here.
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 10
