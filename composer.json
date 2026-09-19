@@ -1,6 +1,6 @@
 {
     "name": "sandermuller/laravel-x402-mcp",
-    "description": "Bridge between laravel/mcp and laravel-x402 — gate MCP tools behind x402 stablecoin payments.",
+    "description": "Bridge between laravel/mcp and laravel-x402 \u2014 gate MCP tools behind x402 stablecoin payments.",
     "type": "library",
     "license": "MIT",
     "keywords": [
@@ -20,9 +20,10 @@
     ],
     "require": {
         "php": "^8.4",
-        "sandermuller/laravel-x402": "^0.8",
+        "illuminate/contracts": "^12.0|^13.0",
+        "illuminate/support": "^12.0|^13.0",
         "laravel/mcp": "^0.7.1|^0.8|^0.9|^1.0",
-        "illuminate/support": "^12.0|^13.0"
+        "sandermuller/laravel-x402": "^0.8"
     },
     "require-dev": {
         "dg/bypass-finals": "^1.9",
@@ -32,23 +33,25 @@
         "laravel/pao": "^1.0",
         "laravel/pint": "^1.29",
         "mockery/mockery": "^1.6",
-        "mrpunyapal/rector-pest": "^0.2",
         "nunomaduro/collision": "^8.0",
-        "orchestra/testbench": "^10.0|^11.0",
-        "pestphp/pest": "^4.0",
-        "pestphp/pest-plugin-arch": "^4.0",
-        "pestphp/pest-plugin-laravel": "^4.0",
+        "orchestra/testbench": "^11.0",
+        "pestphp/pest": "^5.0",
+        "pestphp/pest-plugin-agent": "^5.0",
+        "pestphp/pest-plugin-arch": "^5.0",
+        "pestphp/pest-plugin-laravel": "^5.0",
+        "pestphp/pest-plugin-phpstan": "^5.0",
+        "pestphp/pest-plugin-rector": "^5.0",
         "phpstan/extension-installer": "^1.4",
-        "phpstan/phpstan": "^2.0",
         "phpstan/phpstan-deprecation-rules": "^2.0",
         "phpstan/phpstan-phpunit": "^2.0",
         "phpstan/phpstan-strict-rules": "^2.0",
         "rector/rector": "^2.0",
-        "sandermuller/package-boost": "^0.15",
+        "sandermuller/boost-skills": "^2.27.0",
+        "sandermuller/package-boost-laravel": "^1.0",
         "spaze/phpstan-disallowed-calls": "^4.10",
-        "symplify/phpstan-extensions": "^12.0",
+        "symplify/phpstan-rules": "^14.12",
         "tomasvotruba/cognitive-complexity": "^1.1",
-        "tomasvotruba/type-coverage": "^2.1"
+        "tomasvotruba/type-coverage": "^2.3"
     },
     "autoload": {
         "psr-4": {
@@ -72,8 +75,23 @@
         }
     },
     "scripts": {
+        "post-autoload-dump": [
+            "@clear",
+            "@prepare"
+        ],
+        "clear": "@php vendor/bin/testbench package:purge-skeleton --ansi",
+        "prepare": "@php vendor/bin/testbench package:discover --ansi",
+        "build": "@php vendor/bin/testbench workbench:build --ansi",
+        "serve": [
+            "Composer\\Config::disableProcessTimeout",
+            "@build",
+            "@php vendor/bin/testbench serve --ansi"
+        ],
         "post-install-cmd": [
-            "if [ $COMPOSER_DEV_MODE -eq 1 ]; then vendor/bin/boost sync; fi"
+            "SanderMuller\\PackageBoostLaravel\\Scripts\\AutoSync::run"
+        ],
+        "post-update-cmd": [
+            "SanderMuller\\PackageBoostLaravel\\Scripts\\AutoSync::run"
         ],
         "phpstan": "vendor/bin/phpstan analyse --memory-limit=2G",
         "phpstan-simplified": "vendor/bin/phpstan analyse --memory-limit=2G --error-format symplify",
@@ -95,5 +113,7 @@
             "phpstan/extension-installer": true
         },
         "sort-packages": true
-    }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
 }

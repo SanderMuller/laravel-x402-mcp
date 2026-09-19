@@ -31,4 +31,17 @@
 /workbench              export-ignore
 
 # >>> package-boost (managed) >>>
+.agents/                export-ignore
+.ai/                    export-ignore
+.claude/                export-ignore
+.cursor/                export-ignore
+.cursorrules            export-ignore
+.github/                export-ignore
+.junie/                 export-ignore
+.kiro/                  export-ignore
+.windsurfrules          export-ignore
+AGENTS.md               export-ignore
+CLAUDE.md               export-ignore
+GEMINI.md               export-ignore
+.config/                export-ignore
 # <<< package-boost (managed) <<<

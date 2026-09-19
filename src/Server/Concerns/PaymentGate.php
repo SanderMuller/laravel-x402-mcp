@@ -360,7 +360,6 @@ trait PaymentGate
 
         $container = Container::getInstance();
 
-        /** @var ConfigRepository $config */
         $config = $container->make(ConfigRepository::class);
 
         if ($config->get('app.debug', false) === true) {
@@ -368,15 +367,24 @@ trait PaymentGate
         }
 
         try {
-            /** @var ExceptionHandler $handler */
-            $handler = $container->make(ExceptionHandler::class);
-            $handler->report($throwable);
+            $this->reportThrough($container->make(ExceptionHandler::class), $throwable);
         } catch (Throwable) {
             // Reporting is best-effort. A misconfigured or missing handler
             // must not swallow the receipt this method exists to preserve.
         }
 
         return Response::error('An internal server error occurred.');
+    }
+
+    /**
+     * Report through the contract rather than whatever concrete handler the
+     * container happens to hold — under Testbench that is Collision's
+     * `@internal` handler, and calling it directly couples this package to
+     * another vendor's internals.
+     */
+    private function reportThrough(ExceptionHandler $exceptionHandler, Throwable $throwable): void
+    {
+        $exceptionHandler->report($throwable);
     }
 
     /**
