@@ -71,7 +71,7 @@ jobs:
     name: P${{ matrix.php }} - L${{ matrix.laravel }} - MCP ${{ matrix.mcp }} - ${{ matrix.stability }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
