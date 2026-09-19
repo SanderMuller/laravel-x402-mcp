@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.0 - 2026-09-19
+
+<!-- verified-sha: c1cee55eb13af947833a410cb80c0dbc9247c17b -->
+Supports Laravel 13 and every `laravel/mcp` release from `0.7.1` to `1.0`. Until now the package only worked against `0.7.0`: `0.7.1` relocated the transport DTOs and the JSON-RPC exception out of `Laravel\Mcp\Server\*`, which made the gated method handlers fatal at class-load time on every later release. The settlement-receipt guarantee has also been made uniform across tools, resources and prompts, and independent of which `laravel/mcp` minor is installed. Tests pass on the CI matrix.
+
+### What's new
+
+- **Laravel 13** — `illuminate/support` is now `^12.0|^13.0`. This follows `sandermuller/laravel-x402` `0.8`, which moved to `illuminate/* ^12|^13` on PHP `^8.4`; `laravel/mcp` has allowed `illuminate ^13` since `0.7.1`, so the entire supported mcp range works on Laravel 13.
+- **`laravel/mcp` `^0.7.1|^0.8|^0.9|^1.0`** — the handlers are written against the post-relocation namespaces (`Laravel\Mcp\Transport\JsonRpc*`, `Laravel\Mcp\Exceptions\JsonRpcException`), so a single set of signatures is valid across the whole range. `X402CallTool` composes `InteractsWithResponses` and declares its own tool serializer, because `1.0` moved both into `Laravel\Mcp\Server\ToolInvoker`. The CI matrix now runs a cell per supported minor.
+- **The receipt lands on every post-settle failure, for all three primitives** — previously only `tools/call` wrapped a failing handler. A paid `resources/read` or `prompts/get` that threw mid-stream let the exception propagate past the receipt, so the client had no proof of a payment that had already settled on-chain. All three handlers now route through the shared wrapper, on both the synchronous and the streaming path. `JsonRpcException` still escapes as a JSON-RPC error envelope.
+
+### Behaviour changes
+
+- **Post-settle exception messages are redacted outside debug mode.** Validation and authorization failures keep their message; any other exception is reported through the application's exception handler and replaced with `'An internal server error occurred.'` unless `app.debug` is on. This matches what `laravel/mcp` `1.0` does for unpaid calls, and prevents a paid call from echoing internal exception text.
+- **A settled-but-failed call is never cached.** The `resources/read` and `prompts/get` serializers emit no `isError` key, so the idempotency cache could not distinguish a failed paid call from a successful one and stored it — a later retry of that authorization was served the stored failure as though it had succeeded. Such calls are now excluded explicitly, matching what priced tools already did.
+- **Paid resource and prompt streams no longer propagate generic mid-stream exceptions.** On `laravel/mcp` `0.9` and below this was the documented behaviour; it is now a terminal error frame carrying the receipt, the same shape `tools/call` produced.
+
+### Requirements
+
+- **PHP `^8.4`** (was `^8.3`) and **Laravel 12 or 13** (was 11 or 12). Both drops come from `sandermuller/laravel-x402` `0.8`, which this release requires: it no longer resolves on PHP 8.3 or Laravel 11. Staying on Laravel 11 or PHP 8.3 means staying on `0.3.0`.
+- **`sandermuller/laravel-x402` `^0.8`** (was `^0.5`).
+- Laravel 12 remains supported in `require`, but the CI matrix exercises Laravel 13 only: Pest 5 needs `symfony/process ^8.1` and Testbench 10 pins `^7.2`, so the pair cannot install together. Laravel 12 breakage is still treated as a bug — report it.
+
+### Notes
+
+- Minimum `laravel/mcp` is `0.7.1`. `0.7.0` and `0.6.x` are no longer supported — `0.7.0` predates the namespace relocation this release standardises on.
+- On `laravel/mcp` `1.0+`, `#[Cacheable]` emits client-facing cache hints. Do not mark a priced resource, or a server hosting one, as `CacheScope::Public`: a paid result advertised as publicly cacheable can be replayed by intermediaries without payment. See the README.
+- No API signatures changed. `WithX402Payment` users need no caller change.
+- Public API is alpha; signatures may shift before `v1.0`.
+
+### Maintenance
+
+- The repo moved to the canonical package tooling: Pest 5 with the first-party `pest-plugin-rector` / `-phpstan` / `-agent` (replacing `mrpunyapal/rector-pest`), Testbench `^11`, `symplify/phpstan-rules` in place of the abandoned `symplify/phpstan-extensions`, and `sandermuller/package-boost-laravel` in place of `package-boost`. None of it reaches the published archive.
+- A zizmor GitHub Actions audit now runs on workflow changes, and the workflows were hardened to pass it (`persist-credentials: false` on the checkouts that never push, a Dependabot cooldown so a bump cannot land the day a release is published).
+- The `.gitattributes` managed block was empty, so `.ai/`, `.claude/` and `.config/` were shipping inside the Composer archive. Regenerated.
+- PHPStan and the test matrix now also run on `composer.json` / `composer.lock` and `testbench.yaml` changes — two dependency-only breakages reached `main` because the path filters watched neither.
+- Dropped the abandoned `rector/type-perfect`, whose rules `tomasvotruba/type-coverage` `2.3` absorbed; installing both registered every rule twice and aborted the analysis.
+- Removed the `PackageBoostServiceProvider` entry from `testbench.yaml`; `package-boost` `0.15.2` no longer ships that class.
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-x402-mcp/compare/0.3.0...0.4.0
+
 ## 0.3.0 - 2026-05-10
 
 ### 0.3.0
